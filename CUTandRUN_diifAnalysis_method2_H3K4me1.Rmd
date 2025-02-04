@@ -1,0 +1,359 @@
+---
+title: "Untitled"
+output: html_document
+date: "2024-02-01"
+---
+
+
+# 1. Generating Peakmatrix
+This step allows us to generate a peakmatrix of all our samples. By doing this, we can quantify and compare peaks between samples.
+
+#### a. Choose samples of interest
+For this, you need to have a complete vector of paths to your sample's bam files (obtained afters step 3) and corresponding peak files (obtained after step 5)
+```{r setup, include=FALSE}
+library(csaw)
+library(GenomicRanges)
+library(tidyverse)
+
+bamReads = c("C:/Users/annav/Documents/Bruno_project/CUT_and_RUN/diffAnalysis/MOLM13_shCTRL_H3K4me1_1_CUTnRUN.filt.nodup.bam",
+             "C:/Users/annav/Documents/Bruno_project/CUT_and_RUN/diffAnalysis/MOLM13_shCTRL_H3K4me1_2_CUTnRUN.filt.nodup.bam",
+             "C:/Users/annav/Documents/Bruno_project/CUT_and_RUN/diffAnalysis/MOLM13_shDDX6_H3K4me1_1_CUTnRUN.filt.nodup.bam",
+             "C:/Users/annav/Documents/Bruno_project/CUT_and_RUN/diffAnalysis/MOLM13_shDDX6_H3K4me1_2_CUTnRUN.filt.nodup.bam")
+
+Peaks = c("C:/Users/annav/Documents/Bruno_project/CUT_and_RUN/MOLM13_sh/MOLM13_shCTRL_H3K4me1_1_CUTnRUN__IgG_peaks.broadPeak",
+          "C:/Users/annav/Documents/Bruno_project/CUT_and_RUN/MOLM13_sh/MOLM13_shCTRL_H3K4me1_2_CUTnRUN__IgG_peaks.broadPeak",
+          "C:/Users/annav/Documents/Bruno_project/CUT_and_RUN/MOLM13_sh/MOLM13_shDDX6_H3K4me1_1_CUTnRUN__IgG_peaks.broadPeak",
+          "C:/Users/annav/Documents/Bruno_project/CUT_and_RUN/MOLM13_sh/MOLM13_shDDX6_H3K4me1_2_CUTnRUN__IgG_peaks.broadPeak")
+
+path_bams <- bamReads # list of paths to your bam files of interest
+path_peaks <- Peaks # list of paths to your corresponding peak files of interest
+
+```
+
+#### b. Read in peaks
+Here, you read all peak files and generate one object with the complete list of all significant peaks found in all samples of interest
+```{r setup, include=FALSE}
+# read in peak files, covert to GRanges objects
+peaks <- GRanges()
+for (i in path_peaks) 
+{
+  a <- data.table::fread(i)[,1:4]
+  aGR <- makeGRangesFromDataFrame(a, seqnames.field = "V1", start.field = "V2", end.field = "V3", keep.extra.columns = T)
+  peaks <- c(peaks, aGR)
+}
+colnames(elementMetadata(peaks)) <- "name"
+peaks$ID <- 1:length(peaks)
+```
+
+#### c. Disjoin peaks
+The next step is to perform a disjoin of the peaks. This means that two overlapping peaks are split into three regions, with region 1 corresponding to the region unique to peak1, regions 2 being the region where both peaks overlap, and region 2 correspoing to the region unique to peak3. The figure below illustrates this.
+```{r setup, include=FALSE}
+# disjoin peaks
+peak_disj <- disjoin(peaks,with.revmap=T)
+```
+
+#### d. Count reads in regions
+In this step we can quantify the number of reads falling in each region per bam file (per sample)
+```{r setup, include=FALSE}
+# count reads falling in each region of peak_disj for each sample in bam_files
+param <- readParam()
+
+# counting
+peak_count <- regionCounts(bam.files = bamReads, regions = peak_disj,
+                           ext = NA, param = param, 
+                           BPPARAM = BatchtoolsParam(workers = length(bamReads)*2))   
+```
+
+#### e. Format and save peakmatrix
+Finally, we can format the resulting quantification and save as a peakmatrix, where each row reflects a region and each column represents a bam file (sample).
+```{r setup, include=FALSE}
+peak_df <- as.data.frame(assay(peak_count))
+colnames(peak_df) <- colData(peak_count)$bam.files
+peak_df$region <- paste(seqnames(rowRanges(peak_count)),ranges(rowRanges(peak_count)), sep = ":")
+
+data.table::fwrite(peak_df[,c(ncol(peak_df),1:(ncol(peak_df)-1))], file=paste0("C:/Users/annav/Documents/Bruno_project/CUT_and_RUN/diffAnalysis/DESeq2/H3K4me1/peak_matrix_counts.tsv"), row.names = F, col.names = T, quote = F, sep = "\t")
+```
+
+# 2. Generating Background Matrix
+Repeat steps 6a-c first
+
+#### d. Count background reads
+Quantify background noise in 10kb bins
+```{r setup, include=FALSE}
+
+# discard disjoined peaks from background counting
+param <- readParam(discard=peak_disj)
+
+# count background noise
+bg_count <- windowCounts(bam.files = bamReads, width = 10000, spacing = 10000,
+                         ext = NA, filter = 0, param = param, 
+                         BPPARAM = BatchtoolsParam(workers = length(bamReads)*2))
+```
+
+#### e. Format and save background matrix
+Finally, we can format the resulting bacground quantification and save as a background matrix, where each row reflects a 10kb bin and each column represents a bam file (sample).
+```{r setup, include=FALSE}
+bg_df <- as.data.frame(assay(bg_count))
+colnames(bg_df) <- colData(bg_count)$bam.files
+bg_df$region <- paste(seqnames(rowRanges(bg_count)),ranges(rowRanges(bg_count)), sep = ":")
+ 
+data.table::fwrite(bg_df[,c(ncol(bg_df),1:(ncol(bg_df)-1))], file=paste0("C:/Users/annav/Documents/Bruno_project/CUT_and_RUN/diffAnalysis/DESeq2/H3K4me1/background_counts.tsv"), row.names = F, col.names = T, quote = F, sep = "\t")
+```
+
+# 3. Differential Analysis
+In this final step, we perform the differential analysis of a histone mark. The output will be a table with regions found with a significant differential deposition of a histone mark (gain or loss).
+
+#### a. Estimate size factors of background matrix
+Size factors (normalization factors) of bacground matrix have to be computed in order to perform the background correction to our peak matrix for proper normalisation before differential analysis.
+```{r setup, include=FALSE}
+library(DESeq2)
+
+# read background matrix
+background_matrix <- read.table("C:/Users/annav/Documents/Bruno_project/CUT_and_RUN/diffAnalysis/DESeq2/H3K4me1/background_counts.tsv",header=T)
+colnames(background_matrix) <- c("regions","shCTRL_H3K4me1_1", "shCTRL_H3K4me1_2", "shDDX6_H3K4me1_1", "shDDX6_H3K4me1_2")
+rownames(background_matrix) <- background_matrix$regions
+background_matrix$regions <- NULL
+
+# prepare metadata
+coldata <- data.frame(id=c("shCTRL_H3K4me1_1","shCTRL_H3K4me1_2","shDDX6_H3K4me1_1","shDDX6_H3K4me1_2") ,
+                      Condition=c("Control", "Control",
+                               "shDDX6","shDDX6"),
+                      rep=c(1, 2, 1, 2))
+rownames(coldata) <- coldata$id
+
+
+dds <- DESeqDataSetFromMatrix(countData = background_matrix,
+                              colData = coldata,
+                              design = ~ Condition)
+
+# estimate size factors
+dds <- estimateSizeFactors(dds)
+sf <- sizeFactors(dds)
+```
+
+#### b. Background correction
+Correct peakmatrix for background signal using the background matrix's size factors.
+```{r setup, include=FALSE}
+
+# read peakmatrix
+count_matrix <- read.table("C:/Users/annav/Documents/Bruno_project/CUT_and_RUN/diffAnalysis/DESeq2/H3K4me1/peak_matrix_counts.tsv",header=T)
+colnames(count_matrix) <- c("regions","shCTRL_H3K4me1_1", "shCTRL_H3K4me1_2", "shDDX6_H3K4me1_1", "shDDX6_H3K4me1_2")
+rownames(count_matrix) <- count_matrix$regions
+count_matrix$regions <- NULL
+```
+
+
+
+
+```{r}
+dds <- DESeqDataSetFromMatrix(countData = count_matrix,
+                              colData = coldata,
+                              design = ~ Condition)
+
+# apply pre-compute size factors with background regions - background correction
+sizeFactors(dds) <- sf
+
+```
+
+#### c. Differential Analysis
+Finally, we can perform the differential analysis between samples. Remember this has to be done with more than one replicate per sample, so if you want to perform this step, you have to generate the peak and background matrices with this in mind.
+```{r setup, include=FALSE}
+dds <- DESeq(dds)
+res_H3K4me1 <- results(dds,contrast=c("Condition","shDDX6","Control"))
+
+res_H3K4me1
+
+table(res_H3K4me1$padj < 0.05)
+```
+
+```{r}
+res_H3K4me1_df <- as.data.frame(res_H3K4me1)
+
+res_H3K4me1_sign <- subset(res_H3K4me1_df, padj < 0.05)
+dim(res_H3K4me1_sign)
+
+res_H3K4me1_sign_logFC_1.5 <- res_H3K4me1_sign[res_H3K4me1_sign$log2FoldChange >= 1.5 | res_H3K4me1_sign$log2FoldChange <= -1.5,]
+dim(res_H3K4me1_sign_logFC_1.5)
+```
+
+
+
+```{r}
+count_matrix_data <- as.data.frame(count_matrix)
+count_matrix_data$regions <- rownames(count_matrix_data)
+
+data_H3K4me1 <- as.data.frame(res_H3K4me1_sign)
+data_H3K4me1$regions <- rownames(data_H3K4me1)
+
+final_res_table_H3K4me1 <- merge(data_H3K4me1, count_matrix_data, by="regions")
+
+writexl::write_xlsx(final_res_table_H3K4me1, "C:/Users/annav/Documents/Bruno_project/CUT_and_RUN/diffAnalysis/DESeq2/H3K4me1/DESeq2_diffAnalysis_H3K4me1.xlsx")
+```
+
+```{r}
+# Assuming your data frame is called 'df' and the column with values is called 'your_column'
+library(tidyr)
+
+# Separate the column into three columns: 'chromosome', 'start', and 'end'
+df_H3K4me1 <- separate(final_res_table_H3K4me1, regions, into = c("chrom", "start_end"), sep = ":", extra = "drop")
+
+# Further separate the 'start_end' column into 'start' and 'end' columns
+df_H3K4me1 <- separate(df_H3K4me1, start_end, into = c("start", "end"), sep = "-", convert = TRUE)
+
+# Convert 'chromosome', 'start', and 'end' columns to appropriate data types if needed
+df_H3K4me1$chrom <- as.character(df_H3K4me1$chrom)
+df_H3K4me1$start <- as.numeric(df_H3K4me1$start)
+df_H3K4me1$end <- as.numeric(df_H3K4me1$end)
+```
+
+# Get normalized counts
+```{r}
+norm_counts_1 <- counts(dds, normalized=TRUE)
+```
+
+```{r}
+# Assuming your data frame is called 'df' and the column with values is called 'your_column'
+library(tidyr)
+
+norm_counts_1 <- as.data.frame(norm_counts_1)
+
+norm_counts_1$regions <- rownames(norm_counts_1)
+
+
+
+
+final_H3K4me1 <- merge(final_res_table_H3K4me1, norm_counts_1, by="regions")
+
+```
+
+
+# 4. Annotate results
+```{r}
+df_H3K4me1$chrom <- sub("^", "chr", df_H3K4me1$chrom )
+
+peaks_H3K4me1.gr = GRanges(na.omit(df_H3K4me1))
+
+peakAnno_H3K4me1  = annotatePeak(peaks_H3K4me1.gr,tssRegion=c(-3000,3000), 
+                         TxDb=txdb, annoDb="org.Hs.eg.db")
+
+H3K4me1_peak.anno_DESeq2 = as.data.frame(peakAnno_H3K4me1)
+
+writexl::write_xlsx(H3K4me1_peak.anno_DESeq2, "C:/Users/annav/Documents/Bruno_project/CUT_and_RUN/diffAnalysis/DESeq2/H3K4me1/DiffAnalysis_H3K4me1_shDDX6_VS_Control_DESeq2_Annotated.xlsx") 
+
+
+```
+
+
+# 5. Scatter plot
+```{r}
+# final_res_table_H3K4me1$Filtering <- ifelse(final_res_table_H3K4me1$log2FoldChange >= 1.5, "1",
+#                   ifelse(final_res_table_H3K4me1$log2FoldChange <= -1.5, "2", "3"))
+
+
+# final_res_table_H3K4me1$shDDX6_avg <- rowMeans(final_res_table_H3K4me1[, c(10:11)], na.rm=TRUE)
+# final_res_table_H3K4me1$Control_avg <- rowMeans(final_res_table_H3K4me1[, c(8:9)], na.rm=TRUE)
+
+final_H3K4me1$shDDX6_avg <- rowMeans(final_H3K4me1[, c(17:18)], na.rm=TRUE)
+final_H3K4me1$Control_avg <- rowMeans(final_H3K4me1[, c(15:16)], na.rm=TRUE)
+
+final_H3K4me1$Filtering <- ifelse(final_H3K4me1$log2FoldChange >= 1.5, "1",
+                  ifelse(final_H3K4me1$log2FoldChange <= -1.5, "2", "3"))
+```
+
+Quantify by logFC
+```{r}
+dim(final_res_table_H3K4me1)
+
+final_res_table_H3K4me1_up <- final_res_table_H3K4me1[final_res_table_H3K4me1$log2FoldChange >= 1.5,]
+dim(final_res_table_H3K4me1_up)
+
+final_res_table_H3K4me1_down <- final_res_table_H3K4me1[final_res_table_H3K4me1$log2FoldChange <= -1.5,]
+dim(final_res_table_H3K4me1_down)
+```
+
+```{r}
+library(ggplot2)
+setwd("C:/Users/annav/Documents/Bruno_project/CUT_and_RUN/diffAnalysis/DESeq2/") 
+pdf("CUTandRUN_H3K4me1_shDDX6_vs_control_scatterPlot_differentialAnalysis.pdf")
+ggplot(final_H3K4me1, aes(x=Control_avg, y=shDDX6_avg)) +
+  geom_point(aes(color = as.factor(Filtering)), size=1) +
+  scale_colour_manual(labels = c("logFC+", "logFC-", "-"), name = "logFC filtering", values = c("#4D69B2", "#ED2024", "gray81")) +
+  theme(legend.position = "none", legend.background = element_blank(),panel.grid.major = element_blank(), panel.grid.minor = element_blank(),panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+  xlab("Control counts") +
+  ylab("shDDX6 counts") +
+  ggtitle("H3K4me1")
+  # geom_text_repel(aes(label = Label), color = "black", size = 4, max.overlaps = Inf) +
+  # geom_point(data = data[data$Label != "", ], aes(x=Conc_NT, y=Conc_sg, col=diff), size = 3, color = "darkolivegreen4") 
+dev.off()
+```
+
+
+
+
+
+
+
+
+
+
+# 6. GO analysis
+```{r}
+H3K4me1_up <- H3K4me1_peak.anno_DESeq2[H3K4me1_peak.anno_DESeq2$log2FoldChange >= 1.5,]
+H3K4me1_down <- H3K4me1_peak.anno_DESeq2[H3K4me1_peak.anno_DESeq2$log2FoldChange <= -1.5,]
+
+dim(H3K4me1_up)
+dim(H3K4me1_down)
+```
+
+```{r}
+ego <- enrichGO(gene = H3K4me1_up$ENSEMBL, 
+                keyType = "ENSEMBL",
+                OrgDb = org.Hs.eg.db, 
+                ont           = "ALL",
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 1,
+                qvalueCutoff  = 1, 
+                readable = TRUE)
+
+H3K4me1_up_GO <- as.data.frame(ego)
+
+H3K4me1_up_GO_sign <- H3K4me1_up_GO[H3K4me1_up_GO$p.adjust < 0.05,]
+
+dim(H3K4me1_up_GO)
+dim(H3K4me1_up_GO_sign)
+
+setwd("C:/Users/annav/Documents/Bruno_project/CUT_and_RUN/diffAnalysis/GO_analysis/") 
+writexl::write_xlsx(H3K4me1_up_GO_sign,"GO_H3K4me1_up_logFC_1.5.xlsx")
+```
+
+
+```{r}
+ego <- enrichGO(gene = H3K4me1_down$ENSEMBL, 
+                keyType = "ENSEMBL",
+                OrgDb = org.Hs.eg.db, 
+                ont           = "ALL",
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 1,
+                qvalueCutoff  = 1, 
+                readable = TRUE)
+
+H3K4me1_down_GO <- as.data.frame(ego)
+
+H3K4me1_down_GO_sign <- H3K4me1_down_GO[H3K4me1_down_GO$p.adjust < 0.05,]
+
+dim(H3K4me1_down_GO)
+dim(H3K4me1_down_GO_sign)
+
+setwd("C:/Users/annav/Documents/Bruno_project/CUT_and_RUN/diffAnalysis/GO_analysis/") 
+writexl::write_xlsx(H3K4me1_down_GO_sign,"GO_H3K4me1_down_logFC_1.5.xlsx")
+```
+
+
+
+
+
+
+
+
+
+
