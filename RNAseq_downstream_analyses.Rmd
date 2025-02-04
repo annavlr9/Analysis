@@ -1,0 +1,1684 @@
+---
+title: "RNAseq Esteban"
+output: html_document
+---
+
+# 1. Load and prepare data
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load libraries
+```{r}
+library(FactoMineR)
+library(edgeR)
+library(limma)
+library(openxlsx)
+library(org.Hs.eg.db)
+```
+
+## Read matrix file and Pheno table
+```{r}
+setwd("C:/Users/annav/OneDrive/Documentos/IJC/Esteban collab")
+exprs.matrix_Esteban <- read.table("raw_featurecounts_experiment2.txt", header = TRUE) 
+colnames(exprs.matrix_Esteban)
+#exprs.matrix_Esteban <- exprs.matrix_Esteban[,c(1,2,7:18)]
+
+  
+setwd("C:/Users/annav/OneDrive/Documentos/IJC/Esteban collab")
+pheno_Esteban <- read.csv("Pheno.csv", sep=",")
+pheno_Esteban
+```
+
+```{r}
+rownames(exprs.matrix_Esteban) <- exprs.matrix_Esteban$Geneid
+exprs.matrix_Esteban_counts <- as.data.frame(exprs.matrix_Esteban)
+
+#length_esteban <- as.data.frame(exprs.matrix_Esteban_counts[,c(6)])
+
+exprs.matrix_Esteban_counts <- exprs.matrix_Esteban_counts[,c(7:18)]
+colnames(exprs.matrix_Esteban_counts)
+```
+
+
+## PCA with TMM normalization from deseq2
+```{r}
+cts <- as.data.frame(exprs.matrix_Esteban_counts)
+###normalize it firstçgroup<-droplevels.factor(group)
+
+y <- DGEList(cts)
+keep <- rowSums(cpm(y)>2) >= 2#### change group depending replicates
+y <- y[keep,]
+dim(y)
+
+y$samples$lib.size <- colSums(y$counts)
+y <- calcNormFactors(y, method="TMM")
+my.data<- cpm(y, prior.count=2, log=TRUE)
+
+# setwd("C:/Users/annav/Documents/Gemma_project/RNAseq/")
+# pdf("RNAseq_Experiment2_PCA.pdf")
+pca <- FactoMineR::PCA(t(my.data), scale.unit = T, graph = F, ncp = 40)
+factoextra::fviz_pca_ind(pca, axes = c(1,2), habillage=as.factor(pheno_Esteban$Condition), repel = F)
+# dev.off()
+```
+
+
+```{r}
+cts <- as.data.frame(exprs.matrix_Esteban_counts)
+###normalize it firstçgroup<-droplevels.factor(group)
+
+y <- DGEList(cts)
+keep <- rowSums(cpm(y)>2) >= 2#### change group depending replicates
+y <- y[keep,]
+dim(y)
+
+y$samples$lib.size <- colSums(y$counts)
+y <- calcNormFactors(y, method="TMM")
+my.data<- cpm(y, prior.count=2, log=TRUE)
+
+# setwd("C:/Users/annav/Documents/Gemma_project/RNAseq/")
+# pdf("RNAseq_Experiment2_PCA.pdf")
+pca <- FactoMineR::PCA(t(my.data), scale.unit = T, graph = F, ncp = 40)
+factoextra::fviz_pca_ind(pca, axes = c(1,2), habillage=as.factor(pheno_Esteban$Condition), repel = F)
+# de
+```
+
+
+## Correlation between samples
+```{r}
+# Compute correlation matrix
+cor.df <- cor(exprs.matrix_Esteban_counts, use = "everything", method = "pearson")
+corrplot::corrplot(cor.df, method = "color", tl.cex = 0.7, number.cex = 0.7)
+
+
+cor.df <- cor(exprs.matrix_Esteban_counts, use = "pairwise.complete.obs", method = "pearson")
+corrplot::corrplot(cor.df, method = "color", tl.cex = 0.7, number.cex = 0.7)
+
+
+
+library(pheatmap)
+setwd("C:/Users/annav/Documents/Gemma_project/RNAseq/Experiment_2/")
+pdf("RNAseq_0h_3h_16h_corrPlot.pdf")
+ComplexHeatmap::pheatmap(cor.df, cluster_rows = F, cluster_cols = F, column_names_side = c("top"))
+dev.off()
+```
+
+
+# 2. DEA (cambios en el mismo timepoint)
+Create the deseq2 object
+```{r}
+exprs.matrix_Esteban_counts <- exprs.matrix_Esteban_counts[,c(11,12,5,6,9,10,3,4,7,8,1,2)]
+pheno_Esteban <- pheno_Esteban[c(11,12,5,6,9,10,3,4,7,8,1,2),]
+
+library(DESeq2)
+dds_mat <- DESeqDataSetFromMatrix(countData = exprs.matrix_Esteban_counts,
+                              colData = pheno_Esteban,
+                              design = ~ Condition)
+dds_mat
+nrow(dds_mat)
+```
+
+```{r}
+exprs.matrix_Esteban_counts <- exprs.matrix_Esteban_counts[,c(11,12,5,6,9,10,3,4,7,8,1,2)]
+pheno_Esteban <- pheno_Esteban[c(11,12,5,6,9,10,3,4,7,8,1,2),]
+
+library(DESeq2)
+dds_mat <- DESeqDataSetFromMatrix(countData = exprs.matrix_Esteban_counts,
+                              colData = pheno_Esteban,
+                              design = ~ Condition)
+dds_mat
+nrow(dds_mat)
+```
+
+
+## Pre-filtering the dataset
+Remove low count reads
+```{r}
+keep <- rowSums(counts(dds_mat)) > 1
+dds_mat <- dds_mat[keep,]
+nrow(dds_mat)
+ddsMat <- estimateSizeFactors(dds_mat)
+nrow(ddsMat)
+```
+
+```{r}
+keep <- rowSums(counts(dds_mat)) > 1
+dds_mat <- dds_mat[keep,]
+nrow(dds_mat)
+ddsMat <- estimateSizeFactors(dds_mat)
+nrow(ddsMat)
+```
+
+
+# 2. EXPLOTAROTY ANALYSIS
+# PCA with vsd transformation
+```{r}
+vsd <- vst(dds)
+
+plotPCA(vsd, "Condition")
+
+
+sampleDists <- dist(t(assay(vsd)))
+sampleDistMatrix <- as.matrix( sampleDists )
+mdsData <- data.frame(cmdscale(sampleDistMatrix))
+mds <- cbind(mdsData, as.data.frame(colData(vsd)))
+ggplot(mds, aes(X1,X2,color=Condition,shape=Condition)) + geom_point(size=3)
+```
+
+
+```{r}
+library("pheatmap")
+mat <- assay(vsd)[ head(order(res_0h_esteban$padj),30), ]
+mat <- mat - rowMeans(mat)
+df <- as.data.frame(colData(vsd)[,c("Condition")])
+pheatmap(mat, annotation_col=df)
+```
+
+# script Yingzhi
+```{r}
+if (!require("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+BiocManager::install(version = "3.14")
+
+BiocManager::install(c("DESeq2"))
+library(DESeq2)
+
+# DESeq analysis
+# DS_2 <- DESeqDataSetFromMatrix(countData=CountFile2[,-2], 
+#                                colData=DataCol_2, 
+#                                design=~Treatment, tidy = TRUE)
+DS_2 <- DESeq(dds_mat)
+
+##### making correlation plot ###
+# making correlation plot
+vsd_2 <- vst(DS_2, blind=FALSE)
+sampleDists_2 <- dist(t(assay(vsd_2)))
+
+library("RColorBrewer")
+library("pheatmap")
+sampleDistMatrix_2 <- as.matrix(sampleDists_2)
+rownames(sampleDistMatrix_2) <- paste(vsd_2$Condition)
+colnames(sampleDistMatrix_2) <- NULL
+
+
+library(pheatmap)
+library(seriation)
+
+cl_cb <- function(hcl, mat){
+    # Recalculate manhattan distances for reorder method
+    dists <- dist(t(assay(vsd_2)))
+
+    # Perform reordering according to OLO method
+    hclust_olo <- reorder(hcl, dists)
+    return(hclust_olo)
+}
+
+pdf(file = "C:/Users/annav/Documents/Gemma_project/RNAseq/Experiment_2/RNAseq_Treatment_experiment_distance_corrplot.pdf",
+    width = 9,
+    height = 7.5)
+
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+ComplexHeatmap::pheatmap(sampleDistMatrix_2,
+                         clustering_distance_rows=sampleDists_2,
+                         clustering_distance_cols=sampleDists_2,
+                         #display_numbers = sampleDistMatrix_2,
+                         #column_names_side = c("top"),
+                         cluster_rows = T, 
+                         cluster_cols = T,
+                         col=colors)
+
+dev.off()
+```
+
+## 2.2 The variance stabilizing transformation and the rlog
+Many common statistical methods for exploratory analysis of multidimensional data, for example clustering and principal components analysis (PCA), work best for data that generally has the same range of variance at different ranges of the mean values. When the expected amount of variance is approximately the same across different mean values, the data is said to be homoskedastic. For RNA-seq counts, however, the expected variance grows with the mean. For example, if one performs PCA directly on a matrix of counts or normalized counts (e.g. correcting for differences in sequencing depth), the resulting plot typically depends mostly on the genes with highest counts because they show the largest absolute differences between samples. A simple and often used strategy to avoid this is to take the logarithm of the normalized count values plus a pseudocount of 1; however, depending on the choice of pseudocount, now the genes with the very lowest counts will contribute a great deal of noise to the resulting plot, because taking the logarithm of small counts actually inflates their variance. We can quickly show this property of counts with some simulated data (here, Poisson counts with a range of lambda from 0.1 to 100). We plot the standard deviation of each row (genes) against the mean:
+```{r}
+lambda <- 10^seq(from = -1, to = 2, length = 1000)
+cts <- matrix(rpois(1000*100, lambda), ncol = 100)
+library("vsn")
+meanSdPlot(cts, ranks = FALSE)
+```
+
+And for logarithm-transformed counts:
+```{r}
+log.cts.one <- log2(cts + 1)
+meanSdPlot(log.cts.one, ranks = FALSE)
+```
+
+## 2.3 Sample distances
+Heatmap of sample-to-sample distances using the variance stabilizing transformed values.
+```{r}
+vsd <- vst(ddsMat)
+
+sampleDists <- dist(t(assay(vsd)))
+sampleDists
+
+library("pheatmap")
+library("RColorBrewer")
+
+sampleDistMatrix <- as.matrix( sampleDists )
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors)
+```
+
+Heatmap of sample-to-sample distances using the Poisson Distance
+```{r}
+library("PoiClaClu")
+poisd <- PoissonDistance(t(counts(ddsMat)))
+
+samplePoisDistMatrix <- as.matrix( poisd$dd )
+colnames(samplePoisDistMatrix) <- NULL
+pheatmap(samplePoisDistMatrix,
+         clustering_distance_rows = poisd$dd,
+         clustering_distance_cols = poisd$dd,
+         col = colors)
+```
+
+PCA plot using the VST data
+```{r}
+plotPCA(vsd, intgroup = c("Condition"))
+
+```
+
+
+MDS plot using VST data
+```{r}
+mds <- as.data.frame(colData(vsd))  %>%
+         cbind(cmdscale(sampleDistMatrix))
+ggplot(mds, aes(x = `1`, y = `2`, color = Condition, shape = Condition)) +
+  geom_point(size = 3) + coord_fixed() + ggtitle("MDS with VST data")
+```
+
+# 3. DEA analysis
+```{r}
+dds <- DESeq(ddsMat)
+resultsNames(dds)
+res_0h_esteban <- results(dds, contrast=c("Condition","Treated_0h","Control_0h"))
+res_3h_esteban <- results(dds, contrast=c("Condition","Treated_3h","Control_3h"))
+res_16h_esteban <- results(dds, contrast=c("Condition","Treated_16h","Control_16h"))
+
+summary(res_0h_esteban)
+summary(res_3h_esteban)
+summary(res_16h_esteban)
+
+res_0h_esteban
+res_3h_esteban
+res_16h_esteban
+```
+
+```{r}
+table(res_0h_esteban$padj < 0.1 & res_0h_esteban$log2FoldChange > 0 )
+table(res_0h_esteban$padj < 0.1 & res_0h_esteban$log2FoldChange < 0 )
+table(res_0h_esteban$padj < 0.1)
+
+table(res_3h_esteban$padj < 0.1 & res_3h_esteban$log2FoldChange > 0 )
+table(res_3h_esteban$padj < 0.1 & res_3h_esteban$log2FoldChange < 0 )
+table(res_3h_esteban$padj < 0.1)
+
+table(res_16h_esteban$padj < 0.1 & res_16h_esteban$log2FoldChange > 0 )
+table(res_16h_esteban$padj < 0.1 & res_16h_esteban$log2FoldChange < 0 )
+table(res_16h_esteban$padj < 0.1)
+
+
+table(res_3h_esteban$padj < 0.1)
+table(res_16h_esteban$padj < 0.1)
+```
+
+
+
+
+```{r}
+# setwd("C:/Users/annav/Documents/Gemma_project/RNAseq/Experiment_2/")
+# pdf("MA_plot_0h.pdf")
+DESeq2::plotMA(res_0h_esteban, ylim=c(-5,5))
+# dev.off()
+# 
+# setwd("C:/Users/annav/Documents/Gemma_project/RNAseq/Experiment_2/")
+# pdf("MA_plot_3h.pdf")
+DESeq2::plotMA(res_3h_esteban, ylim=c(-5,5))
+# dev.off()
+# 
+# setwd("C:/Users/annav/Documents/Gemma_project/RNAseq/Experiment_2/")
+# pdf("MA_plot_16h.pdf")
+DESeq2::plotMA(res_16h_esteban, ylim=c(-5,5))
+# dev.off()
+```
+
+
+```{r}
+res_0h_esteban <- as.data.frame(res_0h_esteban)
+res_3h_esteban <- as.data.frame(res_3h_esteban)
+res_16h_esteban <- as.data.frame(res_16h_esteban)
+```
+
+
+
+## MA plots with ggplot2
+```{r}
+res.vol_0h <- res_0h_esteban %>% mutate(condition = if_else(log2FoldChange > 0 & padj < 0.05, 'UP', 
+                                                  if_else(log2FoldChange < 0 & padj < 0.05, 'DOWN', 'UNCHANGED')))
+
+res.vol_0h <- na.omit(res.vol_0h)
+
+setwd("C:/Users/annav/Documents/Gemma_project/RNAseq/new_plots_july_2024/MA_plots/new_axis_limit")
+pdf("MAplot_treatment_0h_limit_axis.pdf")
+# Create the plot with correctly mapped legend
+ggplot(res.vol_0h, aes(x = log10(baseMean), y = log2FoldChange, col = as.factor(condition))) + 
+  geom_point(size = 0.5) + 
+  labs(x = "log10 Mean Normalized counts", y = "log2FoldChange") + 
+  scale_color_manual(values = c("UP" = "darkgreen", "DOWN" = "darkred"),
+                     labels = c(paste("UP", sum(res.vol_0h$condition == "UP"), sep = ": "),
+                                paste("DOWN", sum(res.vol_0h$condition == "DOWN"), sep = ": ")),
+                     breaks = c("UP", "DOWN")) +
+  theme_classic() + 
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 12),
+        axis.text = element_text(size = 12, color = "black"),
+        axis.title = element_text(size = 12, face = "bold", color = "black"),
+        legend.position = "right") + 
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
+  ylim(-4,2)
+dev.off()
+```
+
+
+
+
+
+```{r}
+up <- res.vol_0h[res.vol_0h$log2FoldChange > 0  & res.vol_0h$padj < 0.05,]
+up <- na.omit(up)
+dim(up)
+
+down <- res.vol_0h[res.vol_0h$log2FoldChange < 0 & res.vol_0h$padj < 0.05,]
+down <- na.omit(down)
+dim(down)
+```
+
+
+```{r}
+res.vol_3h <- res_3h_esteban %>% mutate(condition = if_else(log2FoldChange > 0 & padj < 0.05, 'UP', 
+                                                  if_else(log2FoldChange < 0 & padj < 0.05, 'DOWN', 'UNCHANGED')))
+
+res.vol_3h <- na.omit(res.vol_3h)
+
+setwd("C:/Users/annav/Documents/Gemma_project/RNAseq/new_plots_july_2024/MA_plots/new_axis_limit")
+pdf("MAplot_treatment_3h_limit_axis.pdf")
+# Create the plot with correctly mapped legend
+ggplot(res.vol_3h, aes(x = log10(baseMean), y = log2FoldChange, col = as.factor(condition))) + 
+  geom_point(size = 0.5) + 
+  labs(x = "log10 Mean Normalized counts", y = "log2FoldChange") + 
+  scale_color_manual(values = c("UP" = "darkgreen", "DOWN" = "darkred"),
+                     labels = c(paste("UP", sum(res.vol_3h$condition == "UP"), sep = ": "),
+                                paste("DOWN", sum(res.vol_3h$condition == "DOWN"), sep = ": ")),
+                     breaks = c("UP", "DOWN")) +
+  theme_classic() + 
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 12),
+        axis.text = element_text(size = 12, color = "black"),
+        axis.title = element_text(size = 12, face = "bold", color = "black"),
+        legend.position = "right") + 
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
+  ylim(-4,2)
+dev.off()
+```
+
+
+```{r}
+up <- res.vol_3h[res.vol_3h$log2FoldChange > 0  & res.vol_3h$padj < 0.05,]
+up <- na.omit(up)
+dim(up)
+
+down <- res.vol_3h[res.vol_3h$log2FoldChange < 0 & res.vol_3h$padj < 0.05,]
+down <- na.omit(down)
+dim(down)
+```
+
+
+
+```{r}
+res.vol_16h <- res_16h_esteban %>% mutate(condition = if_else(log2FoldChange > 0 & padj < 0.05, 'UP', 
+                                                  if_else(log2FoldChange < 0 & padj < 0.05, 'DOWN', 'UNCHANGED')))
+
+res.vol_16h <- na.omit(res.vol_16h)
+
+setwd("C:/Users/annav/Documents/Gemma_project/RNAseq/new_plots_july_2024/MA_plots/new_axis_limit")
+pdf("MAplot_treatment_16h_limit_axis.pdf")
+# Create the plot with correctly mapped legend
+ggplot(res.vol_16h, aes(x = log10(baseMean), y = log2FoldChange, col = as.factor(condition))) + 
+  geom_point(size = 0.5) + 
+  labs(x = "log10 Mean Normalized counts", y = "log2FoldChange") + 
+  scale_color_manual(values = c("UP" = "darkgreen", "DOWN" = "darkred"),
+                     labels = c(paste("UP", sum(res.vol_16h$condition == "UP"), sep = ": "),
+                                paste("DOWN", sum(res.vol_16h$condition == "DOWN"), sep = ": ")),
+                     breaks = c("UP", "DOWN")) +
+  theme_classic() + 
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 12),
+        axis.text = element_text(size = 12, color = "black"),
+        axis.title = element_text(size = 12, face = "bold", color = "black"),
+        legend.position = "right") + 
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
+  ylim(-4,2)
+dev.off()
+```
+
+
+
+```{r}
+up <- res.vol_16h[res.vol_16h$log2FoldChange > 0  & res.vol_16h$padj < 0.05,]
+up <- na.omit(up)
+dim(up)
+
+down <- res.vol_16h[res.vol_16h$log2FoldChange < 0 & res.vol_16h$padj < 0.05,]
+down <- na.omit(down)
+dim(down)
+```
+
+# Volcano Plots
+```{r}
+data_0h_exp2 <- as.data.frame(res_0h_esteban)
+library(ggplot2)
+mycolors <- c("blue", "red", "black")
+names(mycolors) <- c("Downregulated", "Upregulated", "Unchanged")
+# add a column of NAs
+data_0h_exp2$diffexpressed <- "Unchanged"
+# if log2Foldchange > 0.6 and pvalue < 0.05, set as "UP"
+data_0h_exp2$diffexpressed[data_0h_exp2$log2FoldChange >= 0.5 & data_0h_exp2$padj < 0.05] <- "Upregulated"
+# if log2Foldchange < -0.6 and pvalue < 0.05, set as "DOWN"
+data_0h_exp2$diffexpressed[data_0h_exp2$log2FoldChange <= -0.5 & data_0h_exp2$padj < 0.05] <- "Downregulated"
+
+
+upregulated_count <- sum(data_0h_exp2$diffexpressed == "Upregulated")
+downregulated_count <- sum(data_0h_exp2$diffexpressed == "Downregulated")
+upregulated_count
+downregulated_count
+
+setwd("C:/Users/annav/Documents/Gemma_project/RNAseq/new_plots_july_2024/")
+ pdf("RNAseq_0h_volcanoPlot.pdf")
+# Re-plot but this time color the points with "diffexpressed"
+ggplot(data=data_0h_exp2, aes(x=log2FoldChange, y=-log10(padj), col=diffexpressed)) +
+  geom_point() +
+  theme_minimal() +
+  geom_vline(xintercept=c(-0.5, 0.5), col="black", size = 0.1) +
+  geom_hline(yintercept=-log10(0.05), col="black", size = 0.1) +
+  scale_color_manual(values=c("skyblue2", "grey", "orangered4"))
+dev.off()
+
+
+
+
+
+
+
+data_3h <- as.data.frame(res_3h_esteban)
+library(ggplot2)
+mycolors <- c("blue", "red", "black")
+names(mycolors) <- c("Downregulated", "Upregulated", "Unchanged")
+# add a column of NAs
+data_3h$diffexpressed <- "Unchanged"
+# if log2Foldchange > 0.6 and pvalue < 0.05, set as "UP"
+data_3h$diffexpressed[data_3h$log2FoldChange >= 0.5 & data_3h$padj < 0.05] <- "Upregulated"
+# if log2Foldchange < -0.6 and pvalue < 0.05, set as "DOWN"
+data_3h$diffexpressed[data_3h$log2FoldChange <= -0.5 & data_3h$padj < 0.05] <- "Downregulated"
+
+
+upregulated_count <- sum(data_3h$diffexpressed == "Upregulated")
+downregulated_count <- sum(data_3h$diffexpressed == "Downregulated")
+upregulated_count
+downregulated_count
+
+
+setwd("C:/Users/annav/Documents/Gemma_project/RNAseq/new_plots_july_2024/")
+pdf("RNAseq_3h_volcanoPlot_xaxis_1.5.pdf")
+# Re-plot but this time color the points with "diffexpressed"
+ggplot(data=data_3h, aes(x=log2FoldChange, y=-log10(padj), col=diffexpressed)) +
+  geom_point() +
+  theme_minimal() +
+  xlim(-1.5,1.5) +
+  geom_vline(xintercept=c(-0.5, 0.5), col="black", size = 0.1) +
+  geom_hline(yintercept=-log10(0.05), col="black", size = 0.1) +
+  scale_color_manual(values=c("skyblue2", "grey", "orangered4"))
+dev.off()
+
+
+
+
+
+
+data_16h <- as.data.frame(res_16h_esteban)
+library(ggplot2)
+mycolors <- c("blue", "red", "black")
+names(mycolors) <- c("Downregulated", "Upregulated", "Unchanged")
+# add a column of NAs
+data_16h$diffexpressed <- "Unchanged"
+# if log2Foldchange > 0.6 and pvalue < 0.05, set as "UP"
+data_16h$diffexpressed[data_16h$log2FoldChange >= 0.5 & data_16h$padj < 0.05] <- "Upregulated"
+# if log2Foldchange < -0.6 and pvalue < 0.05, set as "DOWN"
+data_16h$diffexpressed[data_16h$log2FoldChange <= -0.5 & data_16h$padj < 0.05] <- "Downregulated"
+
+
+upregulated_count <- sum(data_16h$diffexpressed == "Upregulated")
+downregulated_count <- sum(data_16h$diffexpressed == "Downregulated")
+upregulated_count
+downregulated_count
+
+
+
+setwd("C:/Users/annav/Documents/Gemma_project/RNAseq/new_plots_july_2024/")
+pdf("RNAseq_16h_volcanoPlot.pdf")
+# Re-plot but this time color the points with "diffexpressed"
+ggplot(data=data_16h, aes(x=log2FoldChange, y=-log10(padj), col=diffexpressed)) +
+  geom_point() +
+  theme_minimal() +
+  geom_vline(xintercept=c(-0.5, 0.5), col="black", size = 0.1) +
+  geom_hline(yintercept=-log10(0.05), col="black", size = 0.1) +
+  scale_color_manual(values=c("skyblue2", "grey", "orangered4"))
+dev.off()
+```
+
+
+
+
+## 3.2 Annotate the DEGs list (without logFC filtering nor padj value)
+```{r}
+res_0h_annotated <- as.data.frame(res_0h_esteban)
+res_0h_annotated$ensembl <- rownames(res_0h_annotated)
+res_0h_annotated$ensembl <- gsub("\\..*","", res_0h_annotated$ensembl)
+res_0h_annotated$gene_symbol <- mapIds(org.Hs.eg.db, keys = res_0h_annotated$ensembl, keytype = "ENSEMBL", column = "SYMBOL")
+head(res_0h_annotated)
+res_0h_annotated <- as.data.frame(res_0h_annotated)
+#setwd("/media/data/Analyses/Projects/Gemma/RNAseq_collab/Results/DEA")
+#writexl::write_xlsx(res_0h_annotated, "RNAseq_0h_Annotated.xlsx")
+
+
+
+res_3h_annotated <- as.data.frame(res_3h_esteban)
+res_3h_annotated$ensembl <- rownames(res_3h_annotated)
+res_3h_annotated$ensembl <- gsub("\\..*","", res_3h_annotated$ensembl)
+res_3h_annotated$gene_symbol <- mapIds(org.Hs.eg.db, keys = res_3h_annotated$ensembl, keytype = "ENSEMBL", column = "SYMBOL")
+head(res_3h_annotated)
+res_3h_annotated <- as.data.frame(res_3h_annotated)
+# setwd("C:/Users/annav/Documents/Gemma_project/RNAseq/Experiment_2")
+# writexl::write_xlsx(res_3h_annotated, "RNAseq_3h_Annotated.xlsx")
+
+
+
+res_16h_annotated <- as.data.frame(res_16h_esteban)
+res_16h_annotated$ensembl <- rownames(res_16h_annotated)
+res_16h_annotated$ensembl <- gsub("\\..*","", res_16h_annotated$ensembl)
+res_16h_annotated$gene_symbol <- mapIds(org.Hs.eg.db, keys = res_16h_annotated$ensembl, keytype = "ENSEMBL", column = "SYMBOL")
+head(res_16h_annotated)
+res_16h_annotated <- as.data.frame(res_16h_annotated)
+#setwd("/media/data/Analyses/Projects/Gemma/RNAseq_collab/Results/DEA")
+#writexl::write_xlsx(res_16h_annotated, "RNAseq_16h_Annotated.xlsx")
+```
+
+We subset the results table to these genes and then sort it by the log2 fold change estimate to get the significant genes with the strongest down-regulation:
+```{r}
+resSig_0h_esteban_exp2 <- subset(res_0h_annotated, padj < 0.05)
+head(resSig_0h_esteban_exp2[ order(resSig_0h_esteban_exp2$log2FoldChange, decreasing = TRUE), ])
+dim(resSig_0h_esteban_exp2)
+
+resSig_3h_esteban_exp2 <- subset(res_3h_annotated, padj < 0.05)
+head(resSig_3h_esteban_exp2[ order(resSig_3h_esteban_exp2$log2FoldChange, decreasing = TRUE), ])
+dim(resSig_3h_esteban_exp2)
+
+resSig_16h_esteban_exp2 <- subset(res_16h_annotated, padj < 0.05)
+head(resSig_16h_esteban_exp2[ order(resSig_16h_esteban_exp2$log2FoldChange, decreasing = TRUE), ])
+dim(resSig_16h_esteban_exp2)
+```
+
+# Heatmap of sample-to-sample distances using the variance stabilizing transformed values.
+```{r}
+library("pheatmap")
+library("RColorBrewer")
+
+vsd <- vst(dds, blind = FALSE)
+head(assay(vsd), 3)
+
+sampleDists <- dist(t(assay(vsd)))
+sampleDists
+
+
+sampleDistMatrix <- as.matrix( sampleDists )
+rownames(sampleDistMatrix) <- paste( vsd$Sample, vsd$Group, sep = " - " )
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors)
+```
+
+# PCa with vsd transformed data
+```{r}
+plotPCA(vsd, intgroup = c("Sample"))
+```
+
+```{r}
+plotPCA(vsd, intgroup = c("Sample", "Group"))
+
+pcaData <- plotPCA(vsd, intgroup = c( "Sample", "Group"), returnData = TRUE)
+pcaData
+
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+
+ggplot(pcaData, aes(x = PC1, y = PC2, color = Sample)) +
+  geom_point(size =3) +
+  xlab(paste0("PC1: ", percentVar[1], "% variance")) +
+  ylab(paste0("PC2: ", percentVar[2], "% variance")) +
+  coord_fixed() +
+  ggtitle("PCA with VST data")
+```
+
+```{r}
+mds <- as.data.frame(colData(vsd))  %>%
+         cbind(cmdscale(sampleDistMatrix))
+ggplot(mds, aes(x = `1`, y = `2`, color = Sample)) +
+  geom_point(size = 3) + coord_fixed() + ggtitle("MDS with VST data")
+```
+
+## 3.3 Up/Down regulated
+```{r}
+resSig_0h_esteban_exp2_UP <- resSig_0h_esteban_exp2[resSig_0h_esteban_exp2$log2FoldChange >= 0.5,]
+dim(resSig_0h_esteban_exp2_UP)
+dim(resSig_0h_esteban_exp2)
+
+
+resSig_0h_esteban_exp2_DOWN <- resSig_0h_esteban_exp2[resSig_0h_esteban_exp2$log2FoldChange <= -0.5,]
+dim(resSig_0h_esteban_exp2_DOWN)
+dim(resSig_0h_esteban_exp2)
+
+
+# setwd("C:/Users/annav/OneDrive/Documentos/IJC/Esteban collab/Results/Experiment2/")
+# write_xlsx(resSig_0h_esteban_exp2_UP,"resSig_0h_exp2_UP_logFC_05.xlsx")
+# setwd("C:/Users/annav/OneDrive/Documentos/IJC/Esteban collab/Results/Experiment2/")
+# write_xlsx(resSig_0h_esteban_exp2_DOWN,"resSig_0h_exp2_DOWN_logFC_05.xlsx")
+```
+
+```{r}
+resSig_3h_esteban_exp2_UP <- resSig_3h_esteban_exp2[resSig_3h_esteban_exp2$log2FoldChange >= 0.5,]
+dim(resSig_3h_esteban_exp2_UP)
+dim(resSig_3h_esteban_exp2)
+
+
+resSig_3h_esteban_exp2_DOWN <- resSig_3h_esteban_exp2[resSig_3h_esteban_exp2$log2FoldChange <= -0.5,]
+dim(resSig_3h_esteban_exp2_DOWN)
+dim(resSig_3h_esteban_exp2)
+
+# setwd("C:/Users/annav/OneDrive/Documentos/IJC/Esteban collab/Results/Experiment2/")
+# write_xlsx(resSig_3h_esteban_exp2_UP,"resSig_3h_exp2_UP_logFC_05.xlsx")
+# setwd("C:/Users/annav/OneDrive/Documentos/IJC/Esteban collab/Results/Experiment2/")
+# write_xlsx(resSig_3h_esteban_exp2_DOWN,"resSig_3h_exp2_DOWN_logFC_05.xlsx")
+```
+
+```{r}
+resSig_16h_esteban_exp2_UP <- resSig_16h_esteban_exp2[resSig_16h_esteban_exp2$log2FoldChange >= 0.5,]
+dim(resSig_16h_esteban_exp2_UP)
+dim(resSig_16h_esteban_exp2)
+
+
+resSig_16h_esteban_exp2_DOWN <- resSig_16h_esteban_exp2[resSig_16h_esteban_exp2$log2FoldChange <= -0.5,]
+dim(resSig_16h_esteban_exp2_DOWN)
+dim(resSig_16h_esteban_exp2)
+
+# setwd("C:/Users/annav/OneDrive/Documentos/IJC/Esteban collab/Results/Experiment2/")
+# write_xlsx(resSig_16h_esteban_exp2_UP,"resSig_16h_exp2_UP_logFC_05.xlsx")
+# setwd("C:/Users/annav/OneDrive/Documentos/IJC/Esteban collab/Results/Experiment2/")
+# write_xlsx(resSig_16h_esteban_exp2_DOWN,"resSig_16h_exp2_DOWN_logFC_05.xlsx")
+```
+
+
+
+
+# DEA cambios dinámicos
+```{r}
+# library(DESeq2)
+# dds_mat <- DESeqDataSetFromMatrix(countData = exprs.matrix_Esteban,
+#                               colData = pheno_Esteban,
+#                               design = ~ Condition)
+# dds_mat
+# 
+# keep <- rowSums(counts(dds_mat)) > 1
+# dds_mat <- dds_mat[keep,]
+# nrow(dds_mat)
+# ddsMat <- estimateSizeFactors(dds_mat)
+# nrow(ddsMat)
+
+# dds <- DESeq(ddsMat)
+# resultsNames(dds)
+
+
+
+
+res_edited_3h_0h <- results(dds, contrast=c("Condition","Treated_3h","Treated_0h"))
+res_nonedited_3h_0h  <- results(dds, contrast=c("Condition","Control_3h","Control_0h"))
+
+res_edited_16h_0h <- results(dds, contrast=c("Condition","Treated_16h","Treated_0h"))
+res_nonedited_16h_0h <- results(dds, contrast=c("Condition","Control_16h","Control_0h"))
+
+res_edited_16h_3h <- results(dds, contrast=c("Condition","Treated_16h","Treated_3h"))
+res_nonedited_16h_3h <- results(dds, contrast=c("Condition","Control_16h","Control_3h"))
+
+
+
+res_edited_3h_0h
+res_nonedited_3h_0h
+
+res_edited_16h_0h
+res_nonedited_16h_0h
+
+res_edited_16h_3h
+res_nonedited_16h_3h
+
+
+
+
+summary(res_edited_3h_0h)
+summary(res_nonedited_3h_0h)
+
+summary(res_edited_16h_0h)
+summary(res_nonedited_16h_0h)
+
+summary(res_edited_16h_3h)
+summary(res_nonedited_16h_3h)
+
+#sum(res_0h$padj < 0.05, na.rm=TRUE)
+#sum(res_3h$padj < 0.05, na.rm=TRUE)
+#sum(res_16h$padj < 0.05, na.rm=TRUE)
+
+#res_0h <- res_0h[order(res_0h$padj),]
+#res_3h <- res_3h[order(res_3h$padj),]
+#res_16h <- res_16h[order(res_16h$padj),]
+```
+
+
+```{r}
+DESeq2::plotMA(res_edited_3h_0h, ylim=c(-5,5))
+DESeq2::plotMA(res_nonedited_3h_0h, ylim=c(-5,5))
+
+DESeq2::plotMA(res_edited_16h_0h, ylim=c(-5,5))
+DESeq2::plotMA(res_nonedited_16h_0h, ylim=c(-5,5))
+
+DESeq2::plotMA(res_edited_16h_3h, ylim=c(-5,5))
+DESeq2::plotMA(res_nonedited_16h_3h, ylim=c(-5,5))
+```
+
+
+```{r}
+res_edited_3h_0h_df <- as.data.frame(res_edited_3h_0h)
+res_nonedited_3h_0h_df <- as.data.frame(res_nonedited_3h_0h)
+
+res_edited_16h_0h_df <- as.data.frame(res_edited_16h_0h)
+res_nonedited_16h_0h_df <- as.data.frame(res_nonedited_16h_0h)
+
+res_edited_16h_3h_df <- as.data.frame(res_edited_16h_3h)
+res_nonedited_16h_3h_df <- as.data.frame(res_nonedited_16h_3h)
+```
+
+
+# Annotate the DEGs list cambios dinámicos
+```{r}
+res_edited_3h_0h_annotated <- as.data.frame(res_edited_3h_0h)
+res_edited_3h_0h_annotated$ensembl <- rownames(res_edited_3h_0h_annotated)
+res_edited_3h_0h_annotated$ensembl <- gsub("\\..*","", res_edited_3h_0h_annotated$ensembl)
+res_edited_3h_0h_annotated$gene_symbol <- mapIds(org.Hs.eg.db, keys = res_edited_3h_0h_annotated$ensembl, keytype = "ENSEMBL", column = "SYMBOL")
+head(res_edited_3h_0h_annotated)
+res_edited_3h_0h_annotated <- as.data.frame(res_edited_3h_0h_annotated)
+setwd("C:/Users/annav/Documents/Gemma_project/RNAseq/Experiment_2/Timepoint_dynamics/")
+# writexl::write_xlsx(res_edited_3h_0h_annotated, "RNAseq_edited_0h_3h_annotated.xlsx")
+
+
+
+res_nonedited_3h_0h_annotated <- as.data.frame(res_nonedited_3h_0h)
+res_nonedited_3h_0h_annotated$ensembl <- rownames(res_nonedited_3h_0h_annotated)
+res_nonedited_3h_0h_annotated$ensembl <- gsub("\\..*","", res_nonedited_3h_0h_annotated$ensembl)
+res_nonedited_3h_0h_annotated$gene_symbol <- mapIds(org.Hs.eg.db, keys = res_nonedited_3h_0h_annotated$ensembl, keytype = "ENSEMBL", column = "SYMBOL")
+head(res_nonedited_3h_0h_annotated)
+res_nonedited_3h_0h_annotated <- as.data.frame(res_nonedited_3h_0h_annotated)
+setwd("C:/Users/annav/Documents/Gemma_project/RNAseq/Experiment_2/Timepoint_dynamics/")
+# writexl::write_xlsx(res_nonedited_3h_0h_annotated, "RNAseq_nonedited_0h_3h_annotated.xlsx")
+
+
+
+res_edited_16h_0h_annotated <- as.data.frame(res_edited_16h_0h)
+res_edited_16h_0h_annotated$ensembl <- rownames(res_edited_16h_0h_annotated)
+res_edited_16h_0h_annotated$ensembl <- gsub("\\..*","", res_edited_16h_0h_annotated$ensembl)
+res_edited_16h_0h_annotated$gene_symbol <- mapIds(org.Hs.eg.db, keys = res_edited_16h_0h_annotated$ensembl, keytype = "ENSEMBL", column = "SYMBOL")
+head(res_edited_16h_0h_annotated)
+res_edited_16h_0h_annotated <- as.data.frame(res_edited_16h_0h_annotated)
+setwd("C:/Users/annav/Documents/Gemma_project/RNAseq/Experiment_2/Timepoint_dynamics/")
+# writexl::write_xlsx(res_edited_16h_0h_annotated, "RNAseq_edited_0h_16h_annotated.xlsx")
+
+
+
+res_nonedited_16h_0h_annotated <- as.data.frame(res_nonedited_16h_0h)
+res_nonedited_16h_0h_annotated$ensembl <- rownames(res_nonedited_16h_0h_annotated)
+res_nonedited_16h_0h_annotated$ensembl <- gsub("\\..*","", res_nonedited_16h_0h_annotated$ensembl)
+res_nonedited_16h_0h_annotated$gene_symbol <- mapIds(org.Hs.eg.db, keys = res_nonedited_16h_0h_annotated$ensembl, keytype = "ENSEMBL", column = "SYMBOL")
+head(res_nonedited_16h_0h_annotated)
+res_nonedited_16h_0h_annotated <- as.data.frame(res_nonedited_16h_0h_annotated)
+setwd("C:/Users/annav/Documents/Gemma_project/RNAseq/Experiment_2/Timepoint_dynamics/")
+# writexl::write_xlsx(res_nonedited_16h_0h_annotated, "RNAseq_nonedited_0h_16h_annotated.xlsx")
+
+
+
+res_edited_16h_3h_annotated <- as.data.frame(res_edited_16h_3h)
+res_edited_16h_3h_annotated$ensembl <- rownames(res_edited_16h_3h_annotated)
+res_edited_16h_3h_annotated$ensembl <- gsub("\\..*","", res_edited_16h_3h_annotated$ensembl)
+res_edited_16h_3h_annotated$gene_symbol <- mapIds(org.Hs.eg.db, keys = res_edited_16h_3h_annotated$ensembl, keytype = "ENSEMBL", column = "SYMBOL")
+head(res_edited_16h_3h_annotated)
+res_edited_16h_3h_annotated <- as.data.frame(res_edited_16h_3h_annotated)
+setwd("C:/Users/annav/Documents/Gemma_project/RNAseq/Experiment_2/Timepoint_dynamics/")
+# writexl::write_xlsx(res_edited_16h_3h_annotated, "RNAseq_edited_3h_16h_annotated.xlsx")
+
+
+
+res_nonedited_16h_3h_annotated <- as.data.frame(res_nonedited_16h_3h)
+res_nonedited_16h_3h_annotated$ensembl <- rownames(res_nonedited_16h_3h_annotated)
+res_nonedited_16h_3h_annotated$ensembl <- gsub("\\..*","", res_nonedited_16h_3h_annotated$ensembl)
+res_nonedited_16h_3h_annotated$gene_symbol <- mapIds(org.Hs.eg.db, keys = res_nonedited_16h_3h_annotated$ensembl, keytype = "ENSEMBL", column = "SYMBOL")
+head(res_nonedited_16h_3h_annotated)
+res_nonedited_16h_3h_annotated <- as.data.frame(res_nonedited_16h_3h_annotated)
+setwd("C:/Users/annav/Documents/Gemma_project/RNAseq/Experiment_2/Timepoint_dynamics/")
+# writexl::write_xlsx(res_nonedited_16h_0h_annotated, "RNAseq_nonedited_3h_16h_annotated.xlsx")
+```
+
+
+
+
+# Normalize counts FPKM
+```{r}
+head(exprs.matrix_Esteban)
+
+### Normalize data ###
+#remove rownames to work for now
+gene_names <- exprs.matrix_Esteban$Geneid
+countdata <- exprs.matrix_Esteban[,c(7:18)]
+
+##FPKM
+#These three metrics attempt to normalize for sequencing depth and gene length. Here’s how you do it for RPKM (or FPKM):
+#   
+#1)Count up the total reads in a sample and divide that number by 1,000,000 – this is our “per million” scaling factor.
+pmsf <- apply(countdata, 2,sum)/1000000
+#2)Divide the read counts by the “per million” scaling factor. This normalizes for sequencing depth, giving you reads per million (RPM)
+rpm <- t(apply(countdata,1,function(x)x/pmsf))
+head(rpm)
+#3)Divide the RPM values by the length of the gene, in kilobases. This gives you RPKM.
+kilobases <- exprs.matrix_Esteban$Length/1000
+FPKM <- apply(rpm,2,function(x)x/kilobases )
+
+
+FPKM <- as.data.frame(FPKM)
+```
+
+```{r}
+# ########compare to result using fpkm function from DESeq2#######
+ library(DESeq2)
+ #extrafont::loadfonts()
+ countdata=read.csv("data/all_samples_gencodevM27.counts.csv")
+ rownames(countdata) <- countdata$gene_id
+ countdata <- countdata[,-1]
+ name=colnames(countdata)
+ tr=strsplit(name,split = "\\.")
+ vector=sapply(tr, function(x)return(x[1]))
+ rep=sapply(tr, function(x)return(x[length(x)]))
+ LPS=sapply(tr, function(x)return(any(grepl("LPS",x))))
+ coldata=data.frame(name,vector,LPS,rep)
+ rownames(coldata) <- coldata$name
+ table(rownames(coldata)==colnames(countdata))
+ coldata$vector <- as.factor(coldata$vector)
+ coldata$vector
+ class(coldata$LPS)
+ coldata$LPS <- as.factor(coldata$LPS)
+ coldata$LPS
+ 
+ ddsMat_fpkm <- DESeqDataSetFromMatrix(countData = exprs.matrix_Esteban_counts,
+                                  colData = pheno_Esteban,
+                                  design = ~ Condition)
+ 
+ mcols(ddsMat_fpkm)$basepairs <- exprs.matrix_Esteban$Length
+ test <- fpkm(object=ddsMat_fpkm,robust = F)
+# 
+FPKM <- cbind(gene_name=rownames(FPKM),FPKM)
+write.csv(FPKM,"all_samples_gencodevM27.htseq_counts.gene_name.FPKM.csv",row.names = F,quote = F)
+# 
+# 
+#####TPM####
+countdata <- read.csv("all_samples_gencodevM27.htseq_counts.gene_name.csv")
+rownames(countdata) <- countdata$gene_name
+countdata <- countdata[,-1]
+
+
+```
+
+
+```{r}
+kilobases <- exprs.matrix_Esteban$Length/1000
+
+#1)Divide the read counts by the length of each gene in kilobases. This gives you reads per kilobase (RPK).
+rpk <- apply(countdata, 2, function(x)x/kilobases)
+#2)Count up all the RPK values in a sample and divide this number by 1,000,000. This is your “per million” scaling factor.
+pmsf.1 <- apply(rpk, 2, sum)/1000000
+#3)Divide the RPK values by the “per million” scaling factor.
+TPM <- t(apply(rpk, 1, function(x)x/pmsf.1))
+head(TPM)
+
+
+TPM <- as.data.frame(TPM)
+rownames(TPM) <- rownames(exprs.matrix_Esteban)
+TPM$ensembl <- rownames(TPM)
+TPM$ensembl <- gsub("\\..*","", TPM$ensembl)
+TPM$gene_symbol <- mapIds(org.Hs.eg.db, keys = TPM$ensembl, keytype = "ENSEMBL", column = "SYMBOL")
+head(TPM)
+TPM_df <- as.data.frame(TPM)
+setwd("C:/Users/annav/OneDrive/Documentos/IJC/Esteban collab/Results")
+writexl::write_xlsx(TPM_df, "RNAseq_edited_nonedited_TPM.xlsx")
+```
+
+
+
+
+
+```{r}
+x <- countdata / exprs.matrix_Esteban$Length
+tpm.mat <- t( t(x) * 1e6 / colSums(x) )
+head(tpm.mat)
+head(TPM_df)
+```
+
+
+
+
+# GO clusterprofiler
+#### 0h upreg
+```{r}
+library(AnnotationDbi)
+library(org.Hs.eg.db)
+library(clusterProfiler)
+
+## Run GO enrichment analysis 
+ego <- enrichGO(gene = resSig_0h_esteban_exp2_UP$ensembl, 
+                keyType = "ENSEMBL",
+                OrgDb = org.Hs.eg.db, 
+                ont           = "ALL",
+                pAdjustMethod = "BH",
+                pvalueCutoff = 1, 
+                qvalueCutoff = 1, 
+                readable = TRUE)
+upreg_0h_GO_all <- as.data.frame(ego)
+
+
+setwd("C:/Users/annav/OneDrive/Documentos/IJC/Esteban collab")
+writexl::write_xlsx(upreg_0h_GO_all,"enrichment_GO_0h_upreg_all.xlsx")
+```
+
+#### 0h downreg
+```{r}
+## Run GO enrichment analysis 
+ego <- enrichGO(gene = resSig_0h_esteban_exp2_DOWN$ensembl, 
+                keyType = "ENSEMBL",
+                OrgDb = org.Hs.eg.db, 
+                ont           = "ALL",
+                pAdjustMethod = "BH",
+                pvalueCutoff = 2, 
+                qvalueCutoff = 2, 
+                readable = TRUE)
+head(ego,3)    
+downreg_0h_GO_all <- as.data.frame(ego)
+
+setwd("C:/Users/annav/OneDrive/Documentos/IJC/Esteban collab")
+writexl::write_xlsx(downreg_0h_GO_all,"enrichment_GO_0h_downreg_all.xlsx")
+```
+
+
+
+#### 3h upreg
+```{r}
+## Run GO enrichment analysis 
+ego <- enrichGO(gene = resSig_3h_esteban_exp2_UP$ensembl, 
+                keyType = "ENSEMBL",
+                OrgDb = org.Hs.eg.db, 
+                ont           = "ALL",
+                pAdjustMethod = "BH",
+                pvalueCutoff = 2, 
+                qvalueCutoff = 2, 
+                readable = TRUE)
+GO <- as.data.frame(ego)
+
+setwd("C:/Users/annav/OneDrive/Documentos/IJC/Esteban collab")
+writexl::write_xlsx(GO,"enrichment_GO_3h_upreg_all.xlsx")
+
+
+#### 3h downreg
+
+## Run GO enrichment analysis 
+ego <- enrichGO(gene = resSig_3h_esteban_exp2_DOWN$ensembl, 
+                keyType = "ENSEMBL",
+                OrgDb = org.Hs.eg.db, 
+                ont           = "ALL",
+                pAdjustMethod = "BH",
+                pvalueCutoff = 2, 
+                qvalueCutoff = 2, 
+                readable = TRUE)
+GO <- as.data.frame(ego)
+
+setwd("C:/Users/annav/OneDrive/Documentos/IJC/Esteban collab")
+writexl::write_xlsx(GO,"enrichment_GO_3h_downreg_all.xlsx")
+
+
+#### 16h upreg
+
+## Run GO enrichment analysis 
+ego <- enrichGO(gene = resSig_16h_esteban_exp2_UP$ensembl, 
+                keyType = "ENSEMBL",
+                OrgDb = org.Hs.eg.db, 
+                ont           = "ALL",
+                pAdjustMethod = "BH", 
+                pvalueCutoff = 2, 
+                qvalueCutoff = 2, 
+                readable = TRUE)
+GO <- as.data.frame(ego)
+
+setwd("C:/Users/annav/OneDrive/Documentos/IJC/Esteban collab")
+writexl::write_xlsx(GO,"enrichment_GO_16h_upreg_all.xlsx")
+
+
+#### 16h downreg
+
+## Run GO enrichment analysis 
+ego <- enrichGO(gene = resSig_16h_esteban_exp2_DOWN$ensembl, 
+                keyType = "ENSEMBL",
+                OrgDb = org.Hs.eg.db, 
+                ont           = "ALL",
+                pAdjustMethod = "BH",
+                pvalueCutoff = 2, 
+                qvalueCutoff = 2, 
+                readable = TRUE)
+GO <- as.data.frame(ego)
+
+setwd("C:/Users/annav/OneDrive/Documentos/IJC/Esteban collab")
+writexl::write_xlsx(GO,"enrichment_GO_16h_downreg_all.xlsx")
+```
+
+
+
+# DOROTHEA
+#### 3h Edited VS nonEdited
+```{r}
+# run dorothea
+setwd("C:/Users/annav/Documents/Gemma_project/RNAseq/Experiment_2")
+
+library(tidyverse)
+library(viper)
+library(ggpubr)
+```
+
+dorothea_hs = A table reporting signed human TF-target interactions. This database covers in total 1395 TFs
+targeting 20,244 genes with 486,676 unique interactions. In addition, each TF is accompanied with
+an empirical confidence level that was derived from the number of supporting evidences for this
+TF/interaction. The range is from A (high quality) to E (low quality).
+```{r}
+data("dorothea_hs", package = "dorothea")
+regulons = dorothea_hs %>%
+  filter(confidence %in% c("A", "B"))
+```
+
+
+viper = Virtual Inference of Protein-activity by Enriched Regulon analysis
+
+df2regulon() converts DoRothEA’s regulons that are stored in a table to the format required by the viper function.
+```{r}
+viper_regulons = df2regulon(regulons) 
+
+names(viper_regulons) = sapply(strsplit(names(viper_regulons), split = ' - '), head, 1)
+```
+
+```{r}
+file = "RNAseq_3h_Annotated.xlsx" # Load your list 
+
+DEsignature <- readxl::read_xlsx(file) %>% dplyr::select(gene_symbol,ensembl, log2FoldChange, padj) %>%
+  unique() %>% na.omit() 
+DEsignature <- DEsignature[!duplicated(DEsignature$gene_symbol),] %>%
+  column_to_rownames("gene_symbol")
+
+myStatistics = matrix(DEsignature$log2FoldChange, dimnames = list(rownames(DEsignature), 'logFC') ) #select logFC
+myPvalue = matrix(DEsignature$padj, dimnames = list(rownames(DEsignature), 'adj.P.Val') ) #select FDR
+mySignature = (qnorm(myPvalue/2, lower.tail = FALSE) * sign(myStatistics))[, 1]
+mySignature = mySignature[order(mySignature, decreasing = T)]
+```
+
+```{r}
+#msviper() performs MAster Regulator INference Analysis
+mrs = msviper(ges = mySignature, regulon = viper_regulons, minsize = 4, ges.filter = F)
+
+summary(mrs)
+
+plot(mrs) #it shows the projection of the negative (repressed shown in blue) and positive (activated, in red) targets of each TF. The option two columns heatmap displayed on the right shows the inferred differentially activity (first column) and the differential expression (second column) with the rank of the displayed genes in the GES (shown all the way to the right)
+```
+
+```{r}
+mrs_2 <- ledge(mrs)
+summary(mrs_2)
+```
+
+
+```{r}
+TF_activities = data.frame(Regulon = names(mrs$es$nes),
+                           Size = mrs$es$size[ names(mrs$es$nes) ], 
+                           NES = mrs$es$nes, 
+                           p.value = mrs$es$p.value, 
+                           FDR = p.adjust(mrs$es$p.value, method = 'fdr'))
+
+TF_activities_Il1b_16h = TF_activities[ order(TF_activities$p.value), ] %>%
+  mutate(comparison = 'Il1b_16h')
+```
+
+
+```{r}
+ggbarplot(TF_activities_Il1b_16h %>%
+                             dplyr::filter(FDR < 0.05) %>%  arrange(NES),  
+                           position = position_dodge(), 'Regulon', 'NES', fill = 'NES', 
+                           scales = 'free') + coord_flip() + 
+  scale_fill_gradient2(low = '#709AE1', high = '#FD7446') + 
+  theme_pubr(border = T, legend ="right") + ggtitle("3h Edited VS 3h nonEdited")
+```
+
+
+
+#### Edited 3h VS 0h
+```{r}
+# run dorothea
+setwd("C:/Users/annav/Documents/Gemma_project/RNAseq/Experiment_2/Timepoint_dynamics/")
+
+library(tidyverse)
+library(viper)
+library(ggpubr)
+
+
+data("dorothea_hs", package = "dorothea")
+regulons = dorothea_hs %>%
+  filter(confidence %in% c("A", "B"))
+
+
+viper_regulons = df2regulon(regulons) 
+
+names(viper_regulons) = sapply(strsplit(names(viper_regulons), split = ' - '), head, 1)
+
+
+file = ".xlsx" # Load your list 
+
+DEsignature <- readxl::read_xlsx(file) %>% dplyr::select(gene_symbol,ensembl, log2FoldChange, padj) %>%
+  unique() %>% na.omit() 
+DEsignature <- DEsignature[!duplicated(DEsignature$gene_symbol),] %>%
+  column_to_rownames("gene_symbol")
+
+myStatistics = matrix(DEsignature$log2FoldChange, dimnames = list(rownames(DEsignature), 'logFC') ) #select logFC
+myPvalue = matrix(DEsignature$padj, dimnames = list(rownames(DEsignature), 'adj.P.Val') ) #select FDR
+mySignature = (qnorm(myPvalue/2, lower.tail = FALSE) * sign(myStatistics))[, 1]
+mySignature = mySignature[order(mySignature, decreasing = T)]
+
+
+#msviper() performs MAster Regulator INference Analysis
+mrs = msviper(ges = mySignature, regulon = viper_regulons, minsize = 4, ges.filter = F)
+
+summary(mrs)
+
+plot(mrs) #it shows the projection of the negative (repressed shown in blue) and positive (activated, in red) targets of each TF. The option two columns heatmap displayed on the right shows the inferred differentially activity (first column) and the differential expression (second column) with the rank of the displayed genes in the GES (shown all the way to the right)
+
+
+mrs_2 <- ledge(mrs)
+summary(mrs_2)
+
+
+TF_activities = data.frame(Regulon = names(mrs$es$nes),
+                           Size = mrs$es$size[ names(mrs$es$nes) ], 
+                           NES = mrs$es$nes, 
+                           p.value = mrs$es$p.value, 
+                           FDR = p.adjust(mrs$es$p.value, method = 'fdr'))
+
+TF_activities_edited_3h_vs_0h = TF_activities[ order(TF_activities$p.value), ] %>%
+  mutate(comparison = 'Il1b_16h')
+
+ggbarplot(TF_activities_edited_3h_vs_0h %>%
+                             dplyr::filter(FDR < 0.05) %>%  arrange(NES),  
+                           position = position_dodge(), 'Regulon', 'NES', fill = 'NES', 
+                           scales = 'free') + coord_flip() + 
+  scale_fill_gradient2(low = '#709AE1', high = '#FD7446') + 
+  theme_pubr(border = T, legend ="right") + ggtitle("Edited 3h VS 0h")
+```
+
+
+#### Non-Edited 3h VS 0h
+```{r}
+# run dorothea
+setwd("C:/Users/annav/Documents/Gemma_project/RNAseq/Experiment_2")
+
+library(tidyverse)
+library(viper)
+library(ggpubr)
+
+
+data("dorothea_hs", package = "dorothea")
+regulons = dorothea_hs %>%
+  filter(confidence %in% c("A", "B"))
+
+
+viper_regulons = df2regulon(regulons) 
+
+names(viper_regulons) = sapply(strsplit(names(viper_regulons), split = ' - '), head, 1)
+
+
+file = ".xlsx" # Load your list 
+
+DEsignature <- readxl::read_xlsx(file) %>% dplyr::select(gene_symbol,ensembl, log2FoldChange, padj) %>%
+  unique() %>% na.omit() 
+DEsignature <- DEsignature[!duplicated(DEsignature$gene_symbol),] %>%
+  column_to_rownames("gene_symbol")
+
+myStatistics = matrix(DEsignature$log2FoldChange, dimnames = list(rownames(DEsignature), 'logFC') ) #select logFC
+myPvalue = matrix(DEsignature$padj, dimnames = list(rownames(DEsignature), 'adj.P.Val') ) #select FDR
+mySignature = (qnorm(myPvalue/2, lower.tail = FALSE) * sign(myStatistics))[, 1]
+mySignature = mySignature[order(mySignature, decreasing = T)]
+
+
+#msviper() performs MAster Regulator INference Analysis
+mrs = msviper(ges = mySignature, regulon = viper_regulons, minsize = 4, ges.filter = F)
+
+summary(mrs)
+
+plot(mrs) #it shows the projection of the negative (repressed shown in blue) and positive (activated, in red) targets of each TF. The option two columns heatmap displayed on the right shows the inferred differentially activity (first column) and the differential expression (second column) with the rank of the displayed genes in the GES (shown all the way to the right)
+
+
+mrs_2 <- ledge(mrs)
+summary(mrs_2)
+
+
+TF_activities = data.frame(Regulon = names(mrs$es$nes),
+                           Size = mrs$es$size[ names(mrs$es$nes) ], 
+                           NES = mrs$es$nes, 
+                           p.value = mrs$es$p.value, 
+                           FDR = p.adjust(mrs$es$p.value, method = 'fdr'))
+
+TF_activities_nonEdited_3h_vs_0h = TF_activities[ order(TF_activities$p.value), ] %>%
+  mutate(comparison = 'Il1b_16h')
+
+ggbarplot(TF_activities_nonEdited_3h_vs_0h %>%
+                             dplyr::filter(FDR < 0.05) %>%  arrange(NES),  
+                           position = position_dodge(), 'Regulon', 'NES', fill = 'NES', 
+                           scales = 'free') + coord_flip() + 
+  scale_fill_gradient2(low = '#709AE1', high = '#FD7446') + 
+  theme_pubr(border = T, legend ="right") + ggtitle("Non-Edited 3h VS 0h")
+```
+
+
+#### Edited 16h VS 0h
+```{r}
+# run dorothea
+setwd("C:/Users/annav/Documents/Gemma_project/RNAseq/Experiment_2")
+
+library(tidyverse)
+library(viper)
+library(ggpubr)
+
+
+data("dorothea_hs", package = "dorothea")
+regulons = dorothea_hs %>%
+  filter(confidence %in% c("A", "B"))
+
+
+viper_regulons = df2regulon(regulons) 
+
+names(viper_regulons) = sapply(strsplit(names(viper_regulons), split = ' - '), head, 1)
+
+
+file = ".xlsx" # Load your list 
+
+DEsignature <- readxl::read_xlsx(file) %>% dplyr::select(gene_symbol,ensembl, log2FoldChange, padj) %>%
+  unique() %>% na.omit() 
+DEsignature <- DEsignature[!duplicated(DEsignature$gene_symbol),] %>%
+  column_to_rownames("gene_symbol")
+
+myStatistics = matrix(DEsignature$log2FoldChange, dimnames = list(rownames(DEsignature), 'logFC') ) #select logFC
+myPvalue = matrix(DEsignature$padj, dimnames = list(rownames(DEsignature), 'adj.P.Val') ) #select FDR
+mySignature = (qnorm(myPvalue/2, lower.tail = FALSE) * sign(myStatistics))[, 1]
+mySignature = mySignature[order(mySignature, decreasing = T)]
+
+
+#msviper() performs MAster Regulator INference Analysis
+mrs = msviper(ges = mySignature, regulon = viper_regulons, minsize = 4, ges.filter = F)
+
+summary(mrs)
+
+plot(mrs) #it shows the projection of the negative (repressed shown in blue) and positive (activated, in red) targets of each TF. The option two columns heatmap displayed on the right shows the inferred differentially activity (first column) and the differential expression (second column) with the rank of the displayed genes in the GES (shown all the way to the right)
+
+
+mrs_2 <- ledge(mrs)
+summary(mrs_2)
+
+
+TF_activities = data.frame(Regulon = names(mrs$es$nes),
+                           Size = mrs$es$size[ names(mrs$es$nes) ], 
+                           NES = mrs$es$nes, 
+                           p.value = mrs$es$p.value, 
+                           FDR = p.adjust(mrs$es$p.value, method = 'fdr'))
+
+TF_activities_edited_16h_vs_0h = TF_activities[ order(TF_activities$p.value), ] %>%
+  mutate(comparison = 'Il1b_16h')
+
+ggbarplot(TF_activities_edited_16h_vs_0h %>%
+                             dplyr::filter(FDR < 0.05) %>%  arrange(NES),  
+                           position = position_dodge(), 'Regulon', 'NES', fill = 'NES', 
+                           scales = 'free') + coord_flip() + 
+  scale_fill_gradient2(low = '#709AE1', high = '#FD7446') + 
+  theme_pubr(border = T, legend ="right") + ggtitle("Edited 16h VS 0h")
+```
+
+
+#### Non-Edited 16h VS 0h
+```{r}
+# run dorothea
+setwd("C:/Users/annav/Documents/Gemma_project/RNAseq/Experiment_2")
+
+library(tidyverse)
+library(viper)
+library(ggpubr)
+
+
+data("dorothea_hs", package = "dorothea")
+regulons = dorothea_hs %>%
+  filter(confidence %in% c("A", "B"))
+
+
+viper_regulons = df2regulon(regulons) 
+
+names(viper_regulons) = sapply(strsplit(names(viper_regulons), split = ' - '), head, 1)
+
+
+file = ".xlsx" # Load your list 
+
+DEsignature <- readxl::read_xlsx(file) %>% dplyr::select(gene_symbol,ensembl, log2FoldChange, padj) %>%
+  unique() %>% na.omit() 
+DEsignature <- DEsignature[!duplicated(DEsignature$gene_symbol),] %>%
+  column_to_rownames("gene_symbol")
+
+myStatistics = matrix(DEsignature$log2FoldChange, dimnames = list(rownames(DEsignature), 'logFC') ) #select logFC
+myPvalue = matrix(DEsignature$padj, dimnames = list(rownames(DEsignature), 'adj.P.Val') ) #select FDR
+mySignature = (qnorm(myPvalue/2, lower.tail = FALSE) * sign(myStatistics))[, 1]
+mySignature = mySignature[order(mySignature, decreasing = T)]
+
+
+#msviper() performs MAster Regulator INference Analysis
+mrs = msviper(ges = mySignature, regulon = viper_regulons, minsize = 4, ges.filter = F)
+
+summary(mrs)
+
+plot(mrs) #it shows the projection of the negative (repressed shown in blue) and positive (activated, in red) targets of each TF. The option two columns heatmap displayed on the right shows the inferred differentially activity (first column) and the differential expression (second column) with the rank of the displayed genes in the GES (shown all the way to the right)
+
+
+mrs_2 <- ledge(mrs)
+summary(mrs_2)
+
+
+TF_activities = data.frame(Regulon = names(mrs$es$nes),
+                           Size = mrs$es$size[ names(mrs$es$nes) ], 
+                           NES = mrs$es$nes, 
+                           p.value = mrs$es$p.value, 
+                           FDR = p.adjust(mrs$es$p.value, method = 'fdr'))
+
+TF_activities_edited_16h_vs_0h = TF_activities[ order(TF_activities$p.value), ] %>%
+  mutate(comparison = 'Il1b_16h')
+
+ggbarplot(TF_activities_edited_16h_vs_0h %>%
+                             dplyr::filter(FDR < 0.05) %>%  arrange(NES),  
+                           position = position_dodge(), 'Regulon', 'NES', fill = 'NES', 
+                           scales = 'free') + coord_flip() + 
+  scale_fill_gradient2(low = '#709AE1', high = '#FD7446') + 
+  theme_pubr(border = T, legend ="right") + ggtitle("Edited 16h VS 0h")
+```
+
+
+#### Edited 16h VS 3h
+```{r}
+# run dorothea
+setwd("C:/Users/annav/Documents/Gemma_project/RNAseq/Experiment_2")
+
+library(tidyverse)
+library(viper)
+library(ggpubr)
+
+
+data("dorothea_hs", package = "dorothea")
+regulons = dorothea_hs %>%
+  filter(confidence %in% c("A", "B"))
+
+
+viper_regulons = df2regulon(regulons) 
+
+names(viper_regulons) = sapply(strsplit(names(viper_regulons), split = ' - '), head, 1)
+
+
+file = ".xlsx" # Load your list 
+
+DEsignature <- readxl::read_xlsx(file) %>% dplyr::select(gene_symbol,ensembl, log2FoldChange, padj) %>%
+  unique() %>% na.omit() 
+DEsignature <- DEsignature[!duplicated(DEsignature$gene_symbol),] %>%
+  column_to_rownames("gene_symbol")
+
+myStatistics = matrix(DEsignature$log2FoldChange, dimnames = list(rownames(DEsignature), 'logFC') ) #select logFC
+myPvalue = matrix(DEsignature$padj, dimnames = list(rownames(DEsignature), 'adj.P.Val') ) #select FDR
+mySignature = (qnorm(myPvalue/2, lower.tail = FALSE) * sign(myStatistics))[, 1]
+mySignature = mySignature[order(mySignature, decreasing = T)]
+
+
+#msviper() performs MAster Regulator INference Analysis
+mrs = msviper(ges = mySignature, regulon = viper_regulons, minsize = 4, ges.filter = F)
+
+summary(mrs)
+
+plot(mrs) #it shows the projection of the negative (repressed shown in blue) and positive (activated, in red) targets of each TF. The option two columns heatmap displayed on the right shows the inferred differentially activity (first column) and the differential expression (second column) with the rank of the displayed genes in the GES (shown all the way to the right)
+
+
+mrs_2 <- ledge(mrs)
+summary(mrs_2)
+
+
+TF_activities = data.frame(Regulon = names(mrs$es$nes),
+                           Size = mrs$es$size[ names(mrs$es$nes) ], 
+                           NES = mrs$es$nes, 
+                           p.value = mrs$es$p.value, 
+                           FDR = p.adjust(mrs$es$p.value, method = 'fdr'))
+
+TF_activities_edited_16h_vs_3h = TF_activities[ order(TF_activities$p.value), ] %>%
+  mutate(comparison = 'Il1b_16h')
+
+ggbarplot(TF_activities_edited_16h_vs_3h %>%
+                             dplyr::filter(FDR < 0.05) %>%  arrange(NES),  
+                           position = position_dodge(), 'Regulon', 'NES', fill = 'NES', 
+                           scales = 'free') + coord_flip() + 
+  scale_fill_gradient2(low = '#709AE1', high = '#FD7446') + 
+  theme_pubr(border = T, legend ="right") + ggtitle("Edited 16h VS 3h")
+```
+
+
+#### Non-Edited 16h VS 3h
+```{r}
+# run dorothea
+setwd("C:/Users/annav/Documents/Gemma_project/RNAseq/Experiment_2")
+
+library(tidyverse)
+library(viper)
+library(ggpubr)
+
+
+data("dorothea_hs", package = "dorothea")
+regulons = dorothea_hs %>%
+  filter(confidence %in% c("A", "B"))
+
+
+viper_regulons = df2regulon(regulons) 
+
+names(viper_regulons) = sapply(strsplit(names(viper_regulons), split = ' - '), head, 1)
+
+
+file = ".xlsx" # Load your list 
+
+DEsignature <- readxl::read_xlsx(file) %>% dplyr::select(gene_symbol,ensembl, log2FoldChange, padj) %>%
+  unique() %>% na.omit() 
+DEsignature <- DEsignature[!duplicated(DEsignature$gene_symbol),] %>%
+  column_to_rownames("gene_symbol")
+
+myStatistics = matrix(DEsignature$log2FoldChange, dimnames = list(rownames(DEsignature), 'logFC') ) #select logFC
+myPvalue = matrix(DEsignature$padj, dimnames = list(rownames(DEsignature), 'adj.P.Val') ) #select FDR
+mySignature = (qnorm(myPvalue/2, lower.tail = FALSE) * sign(myStatistics))[, 1]
+mySignature = mySignature[order(mySignature, decreasing = T)]
+
+
+#msviper() performs MAster Regulator INference Analysis
+mrs = msviper(ges = mySignature, regulon = viper_regulons, minsize = 4, ges.filter = F)
+
+summary(mrs)
+
+plot(mrs) #it shows the projection of the negative (repressed shown in blue) and positive (activated, in red) targets of each TF. The option two columns heatmap displayed on the right shows the inferred differentially activity (first column) and the differential expression (second column) with the rank of the displayed genes in the GES (shown all the way to the right)
+
+
+mrs_2 <- ledge(mrs)
+summary(mrs_2)
+
+
+TF_activities = data.frame(Regulon = names(mrs$es$nes),
+                           Size = mrs$es$size[ names(mrs$es$nes) ], 
+                           NES = mrs$es$nes, 
+                           p.value = mrs$es$p.value, 
+                           FDR = p.adjust(mrs$es$p.value, method = 'fdr'))
+
+TF_activities_nonEdited_16h_vs_3h = TF_activities[ order(TF_activities$p.value), ] %>%
+  mutate(comparison = 'Il1b_16h')
+
+ggbarplot(TF_activities_nonEdited_16h_vs_3h %>%
+                             dplyr::filter(FDR < 0.05) %>%  arrange(NES),  
+                           position = position_dodge(), 'Regulon', 'NES', fill = 'NES', 
+                           scales = 'free') + coord_flip() + 
+  scale_fill_gradient2(low = '#709AE1', high = '#FD7446') + 
+  theme_pubr(border = T, legend ="right") + ggtitle("Non-Edited 16h VS 3h")
+```
+
+
+
+
+
+
+
+# Select M1 and M2 genes on UP/DOWN in 3h treatment
+```{r}
+# List of genes UP
+up <- res_3h_esteban[res_3h_esteban$log2FoldChange > 0  & res_3h_esteban$padj < 0.05,]
+up <- na.omit(up)
+dim(up)
+
+annotate <- as.data.frame(up)
+annotate$ensembl <- rownames(annotate)
+annotate$ensembl <- gsub("\\..*","", annotate$ensembl)
+annotate$gene_symbol <- mapIds(org.Hs.eg.db, keys = annotate$ensembl, keytype = "ENSEMBL", column = "SYMBOL")
+head(annotate)
+up_annotated <- as.data.frame(annotate)
+
+up_genes <- as.data.frame(up_annotated$gene_symbol)
+```
+
+# List of genes DOWN
+```{r}
+down <- res_3h_esteban[res_3h_esteban$log2FoldChange < 0 & res_3h_esteban$padj < 0.05,]
+down <- na.omit(down)
+dim(down)
+
+annotate <- as.data.frame(down)
+annotate$ensembl <- rownames(annotate)
+annotate$ensembl <- gsub("\\..*","", annotate$ensembl)
+annotate$gene_symbol <- mapIds(org.Hs.eg.db, keys = annotate$ensembl, keytype = "ENSEMBL", column = "SYMBOL")
+head(annotate)
+down_annotated <- as.data.frame(annotate)
+
+down_genes <- as.data.frame(down_annotated$gene_symbol)
+```
+
+# Intersect M1 genes in list UP
+```{r}
+M1_genes <- readxl::read_xlsx("C:/Users/annav/Documents/Gemma_project/RNAseq/new_plots_july_2024/M1_genes.xlsx")
+M1_genes <- as.data.frame(M1_genes)
+head(M1_genes)
+
+
+
+
+
+
+colnames(M1_genes)[which(names(M1_genes) == "M1")] <- "gene_name"
+colnames(M2_genes)[which(names(M2_genes) == "M2")] <- "gene_name"
+
+colnames(up_annotated)[which(names(up_annotated) == "gene_symbol")] <- "gene_name"
+colnames(down_annotated)[which(names(down_annotated) == "gene_symbol")] <- "gene_name"
+
+
+
+library(dplyr)
+M1_UP <- inner_join(M1_genes$M1, up_genes$`up_annotated$gene_symbol`)
+dim(M1_UP)
+
+
+
+
+```
+
+# Intersect M1 genes in list DOWN
+```{r}
+M1_DOWN <- inner_join(df1, df2)
+```
+
+# Intersect M2 genes in list UP
+```{r}
+M2_genes <- readxl::read_xlsx("C:/Users/annav/Documents/Gemma_project/RNAseq/new_plots_july_2024/M2_genes.xlsx")
+M2_genes <- as.data.frame(M2_genes)
+head(M2_genes)
+
+
+M2_UP <- inner_join(df1, df2)
+```
+
+
+
+
+
+
+
+
+
+```{r}
+M1_UP <- merge(M1_genes, up_annotated, by = "gene_name")
+M1_DOWN <- merge(M1_genes, down_annotated, by = "gene_name")
+M2_UP <- merge(M2_genes, up_annotated, by = "gene_name")
+M2_DOWN <- merge(M2_genes, down_annotated, by = "gene_name")
+
+dim(M1_UP)
+dim(M1_DOWN)
+dim(M2_UP)
+dim(M2_DOWN)
+
+
+writexl::write_xlsx(M1_UP, "C:/Users/annav/Documents/Gemma_project/RNAseq/new_plots_july_2024/M1_UP.xlsx")
+writexl::write_xlsx(M1_DOWN, "C:/Users/annav/Documents/Gemma_project/RNAseq/new_plots_july_2024/M1_DOWN.xlsx")
+writexl::write_xlsx(M2_UP, "C:/Users/annav/Documents/Gemma_project/RNAseq/new_plots_july_2024/M2_UP.xlsx")
+writexl::write_xlsx(M2_DOWN, "C:/Users/annav/Documents/Gemma_project/RNAseq/new_plots_july_2024/M2_DOWN.xlsx")
+```
+
+
+
+
+
+
+
