@@ -1,0 +1,1536 @@
+---
+title: "DNA methylation Pipeline - Human"                                                                        
+output: html_document                                                                                      
+editor_options:
+  markdown:
+    wrap: 72
+---
+
+From
+<https://www.bioconductor.org/help/course-materials/2015/BioC2015/methylation450k.html#classes>
+
+# 1. Load libraries
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+library(minfi)  
+library(DMRcate)                                                                  
+library(IlluminaHumanMethylationEPICanno.ilm10b5.hg38)               
+library(factoextra)  
+library(FactoMineR)  
+library(limma)                                                                      
+library(M3C)    
+library(NMF) # loading for aheatmap plotting function
+library(ggsci) # more cool colours
+library(heatmap.2x)  
+library(RColorBrewer)  
+library(writexl)  
+library(readxl)                                                                      
+library(missMethyl)  
+library(heatmap.2x)## approach  
+library(RColorBrewer)    
+library(tidyverse)
+library(plotly)
+#library(shinyMethyl)
+
+library(IlluminaHumanMethylationEPICv2manifest)
+library(IlluminaHumanMethylationEPICv2anno.20a1.hg38)
+```
+
+# 2. Load annotation
+```{r echo=FALSE, warning=FALSE}
+ann_epicV2 <- getAnnotation(IlluminaHumanMethylationEPICv2anno.20a1.hg38)
+ann_epicV2 <- as.data.frame(ann_epicV2)           
+```
+
+
+```{r}
+cgs <- ann_epicV2[,c(1,2,4)]
+
+cgs <- cgs %>%
+  mutate(end = pos + 1)
+
+
+setwd("C:/Users/annav/Documents/Gemma_project/Methylation_arrays")
+writexl::write_xlsx(cgs, "CgS_epic2.xlsx")
+
+ann_epicV2[grep("cg1572973", rownames(ann_epicV2)), ]
+
+
+ann_epicV_2 <- ann_epicV2[,c(1:28)]
+```
+
+
+# 2.1 Loading data
+```{r echo=FALSE, warning=FALSE}
+setwd("C:/Users/annav/Documents/Gemma_project/Methylation_arrays/Dec_2023/Samples/")
+
+idat.folder <- "C:/Users/annav/Documents/Gemma_project/Methylation_arrays/Dec_2023/Samples" 
+                                                                        
+targets <- read.metharray.sheet(base=idat.folder)
+targets                                            
+RGSet <- read.metharray.exp(targets = targets,verbose = T,force=T)  
+RGSet
+```
+
+Annotate it as EPICv2
+```{r}
+RGSet@annotation = c(array = "IlluminaHumanMethylationEPICv2", annotation = "20a1.hg38")
+RGSet
+```    
+
+```{r, warning=FALSE}
+# give the samples descriptive names  
+sampleNames(RGSet) <- targets$Sample_Name 
+RGSet
+```
+
+
+
+The class of RGSet is a RGChannelSet object. This is the initial object of a minfi analysis that contains the raw intensities in the green and red channels. Note that this object contains the intensities of the internal control probes as well. Because we read the data from a data sheet experiment, the phenotype data is also stored in the RGChannelSet and can be accessed via the accessor command pData:
+```{r, warning=FALSE}
+phenoData <- pData(RGSet)
+phenoData                     
+```
+
+The RGChannelSet stores also a manifest object that contains the probe design information of the array:
+```{r, warning=FALSE}
+# manifest <- getManifest(RGSet)
+# manifest                             
+```
+
+```{r, warning=FALSE}
+# head(getProbeInfo(manifest))                                               
+```
+
+
+# 3.1 MethylSet and RatioSet
+A MethylSet objects contains only the methylated and unmethylated signals. You create this by
+```{r, warning=FALSE}
+MSet <- preprocessRaw(RGSet) 
+MSet
+```
+
+This function matches up the different probes and color channels. Note that the dimension of this object is much smaller than for the RGChannelSet; this is because CpGs measured by type I probes are measured by 2 probes.
+
+The accessors getMeth and getUnmeth can be used to get the methylated and unmethylated intensities matrices:
+```{r, warning=FALSE}
+# head(getMeth(MSet)[,1:3])
+# head(getUnmeth(MSet)[,1:3])
+```
+
+A RatioSet object is a class designed to store Beta values and/or M values instead of the methylated and unmethylated signals. An optional copy number matrix, CN, the sum of the methylated and unmethylated signals, can be also stored. Mapping a MethylSet to a RatioSet may be irreversible, i.e. one cannot be guranteed to retrieve the methylated and unmethylated signals from a RatioSet. A RatioSet can be created with the function ratioConvert:
+```{r, warning=FALSE}
+# RSet <- ratioConvert(MSet, what = "both", keepCN = TRUE)
+# RSet
+# beta <- getBeta(RSet)
+```
+
+The functions getBeta, getM and getCN return respectively the Beta value matrix, M value matrix and the Copy Number matrix.
+```{r, warning=FALSE}
+# beta <- getBeta(RSet)
+```
+
+
+# 3.2 GenomicRatioSet
+The function mapToGenome applied to a RatioSet object will add genomic coordinates to each probe together with some additional annotation information. The output object is a GenomicRatioSet (class holding M or/and Beta values together with associated genomic coordinates). It is possible to merge the manifest object with the genomic locations by setting the option mergeManifest to TRUE.
+```{r, warning=FALSE}
+# GRset <- mapToGenome(RSet)
+# GRset
+```
+
+Note that the GenomicRatioSet extends the class SummarizedExperiment. Here are the main accessors functions to access the data:
+```{r, warning=FALSE}
+# beta <- getBeta(GRset)
+# M <- getM(GRset)
+# CN <- getCN(GRset)
+```
+
+```{r, warning=FALSE}
+# sampleNames <- sampleNames(GRset)
+# probeNames <- featureNames(GRset)
+# pheno <- pData(GRset)
+```
+
+To return the probe locations as a GenomicRanges objects, one can use the accessor granges:
+```{r, warning=FALSE}
+# gr <- granges(GRset)
+# head(gr, n= 3)
+```
+
+To access the full annotation, one can use the command getAnnotation:
+```{r, warning=FALSE}
+# annotation <- getAnnotation(GRset)
+# names(annotation)
+```
+
+
+# 4. Quality control
+minfi provides a simple quality control plot that uses the log median intensity in both the methylated (M) and unmethylated (U) channels. When plotting these two medians against each other, it has been observed that good samples cluster together, while failed samples tend to separate and have lower median intensities. In order to obtain the methylated and unmethylated signals, we need to convert the RGChannelSet to an object containing the methylated and unmethylated signals using the function preprocessRaw. It takes as input a RGChannelSet and converts the red and green intensities to methylated and unmethylated signals according to the special 450K probe design, and returns the converted signals in a new object of class MethylSet. It does not perform any normalization.
+
+The accessors getMeth and getUnmeth can be used to get the methylated and unmethylated intensities matrices:
+```{r, warning=FALSE}
+head(getMeth(MSet)[,1:3])
+head(getUnmeth(MSet)[,1:3])
+```
+
+The functions getQC and plotQC are designed to extract and plot the quality control information from the MethylSet:
+```{r, warning=FALSE}
+qc <- getQC(MSet)
+qc
+qc_df<- as.data.frame(qc)
+plotQC(qc)
+```
+
+```{r}
+# plot_ly(qc_df, x = ~mMed, y = ~uMed)
+```
+
+Moreover, the function addQC applied to the MethylSet will add the QC information to the phenotype data.
+
+To further explore the quality of the samples, it is useful to look at the Beta value densities of the samples, with the option to color the densities by group:
+```{r, warning=FALSE}
+densityPlot(MSet, sampGroups = phenoData$Condition)
+```
+
+```{r, warning=FALSE}
+densityBeanPlot(MSet, sampGroups = phenoData$Condition)
+```
+
+shinyMethyl is particularly useful to visualize all plots at the same time in an interactive fashion.
+
+
+
+# 4.2 Control probes plot
+The 450k array contains several internal control probes that can be used to assess the quality control of different sample preparation steps (bisulfite conversion, hybridization, etc.). The values of these control probes are stored in the initial RGChannelSet and can be plotted by using the function controlStripPlot and by specifying the control probe type:
+```{r, warning=FALSE}
+controlStripPlot(RGSet, controls="BISULFITE CONVERSION II")
+```
+
+All the plots above can be exported into a pdf file in one step using the function qcReport:
+```{r, warning=FALSE}
+setwd("C:/Users/annav/Documents/Gemma_project/Methylation_arrays/Dec_2023/Samples/")
+qcReport(RGSet, pdf= "qcReport.pdf")
+```
+
+## 4.3 Detection pValue 
+In general, a decision of good versus bad quality should be based on
+multiple metrics, not just one. Therefore, we can additionally look at
+the detection p-values for e very CpG in every sample, which is
+indicative of the quality of the signal. The method used by minfi to
+calculate detection p-values compares the total signal (M+U) for each
+probe to the background signal level, which is estimated from the
+negative control probes. Very small p-values are indicative of a
+reliable signal whilst large p- values, for example \>0.01, generally
+indicate a poor quality signal.
+
+Plotting the mean detection p-value for each sample allows us to gauge
+the general quality of the samples in terms of the overall signal
+reliability. Samples that have many failed probes will have relatively
+large mean detection p-values.
+
+```{r, warning=FALSE}
+# calculate the detection p-values
+detP <- detectionP(RGSet)
+head(detP)
+
+# detP_df <- as.data.frame(detP)
+# detP_df$cg_name <- rownames(detP_df)
+```
+
+```{r, warning=FALSE}
+# examine mean detection p-values across all samples to identify any failed samples
+barplot(colMeans(detP), las=2, cex.names=0.8, ylab="Mean detection p-values")
+abline(h=0.01,col="red")
+```
+
+
+
+
+
+Poor quality samples can be easily excluded from the analysis using a
+detection p-value cutoff, for example \>0.05. For this particular
+dataset, the birth sample shows a very high mean detection p-value.
+
+The overall density distribution of Beta values for each sample is
+another useful metric to determine sample quality. Usually, one would
+expect to see most Beta values to be either close to 0 or 1, indicating
+most of the CpG sites in the sample are unmethylated or methylated. The
+densityPlot function plots these distribution for each sample.
+```{r}
+# phenoData <- pData(MSet)
+# densityPlot(MSet, sampGroups = phenoData$Condition)
+```
+
+
+## 4.4 Remove samples
+```{r, warning=FALSE}
+keep <- colMeans(detP) < 0.01
+table(keep)
+mSetSqFlt <- RGSet[,keep]
+dim(mSetSqFlt)
+
+#mVals <- mVals[,keep]
+
+detP <- detP[,keep]
+dim(detP)
+
+targets_filt <- targets[keep,]
+dim(targets_filt)
+dim(targets)
+```
+
+# Filering of probes
+```{r, warning=FALSE}
+keep <- rowMeans(detP) < 0.01
+table(keep)
+mSetSqFlt <- RGSet[keep,] #change this for the filtered one if samples have been removed in the previous step
+dim(mSetSqFlt)
+dim(RGSet)
+```
+
+
+
+```{r}
+##remove "bad" samples (sg_7D_r4)
+mSetSqFlt_filt <- mSetSqFlt[,-c(4,8,12,16,20,24)]
+dim(mSetSqFlt_filt)
+
+targets_filt <- targets[-c(4,8,12,16,20,24),]
+dim(targets_filt)
+```
+
+
+
+
+# 5 Preprocessing and normalization
+If there exist global biological methylation differences between your samples, as for instance a dataset with cancer and normal samples, or a dataset with different tissues/cell types, use the preprocessFunnorm function as it is aimed for such datasets. On the other hand, if you do not expect global differences between your samples, for instance a blood dataset, or one-tissue dataset, use the preprocessQuantile function. In our experience, these two normalization procedures perform always better than the functions preprocessRaw, preprocessIllumina and preprocessSWAN discussed below. For convenience, these functions are still implemented in the minfi package.
+
+
+## 5.1 preprocessRaw
+As seen before, it converts a RGChannelSet to a MethylSet by converting the Red and Green channels into a matrix of methylated signals and a matrix of unmethylated signals. No normalization is performed.
+
+  Input: RGChannelSet
+  Output: MethylSet
+
+
+
+
+## 5.2 preprocessIllumina
+Convert a RGChannelSet to a MethylSet by implementing the preprocessing choices as available in Genome Studio: background subtraction and control normalization. Both of them are optional and turning them off is equivalent to raw preprocessing (preprocessRaw):
+```{r}
+#MSet.illumina <- preprocessIllumina(mSetSqFlt, bg.correct = TRUE,
+                               #normalize = "controls")
+```
+  Input: RGChannelSet
+  Output: MethylSet
+
+
+
+## 5.3 preprocessSWAN
+Perform Subset-quantile within array normalization (SWAN) (Jovana Maksimovic, Lavinia Gordon, and Alicia Oshlack 2012), a within-array normalization correction for the technical differences between the Type I and Type II array designs. The algorithm matches the Beta-value distributions of the Type I and Type II probes by applying a within-array quantile normalization separately for different subsets of probes (divided by CpG content). The input of SWAN is a MethylSet, and the function returns a MethylSet as well. If an RGChannelSet is provided instead, the function will first call preprocessRaw on the RGChannelSet, and then apply the SWAN normalization. We recommend setting a seed (using set.seed) before using preprocessSWAN to ensure that the normalized intensities will be reproducible.
+```{r}
+#MSet.swan <- preprocessSWAN(mSetSqFlt)
+```
+  Input: RGChannelSet or MethylSet
+  Output: MethylSet
+
+
+
+## 5.4 preprocessQuantile
+This function implements stratified quantile normalization preprocessing. The normalization procedure is applied to the Meth and Unmeth intensities separately. The distribution of type I and type II signals is forced to be the same by first quantile normalizing the type II probes across samples and then interpolating a reference distribution to which we normalize the type I probes. Since probe types and probe regions are confounded and we know that DNAm distributions vary across regions we stratify the probes by region before applying this interpolation. Note that this algorithm relies on the assumptions necessary for quantile normalization to be applicable and thus is not recommended for cases where global changes are expected such as in cancer-normal comparisons. Note that this normalization procedure is essentially similar to one previously presented (Nizar Touleimat and Jörg Tost 2012). The different options can be summarized into the following list:
+
+If fixMethOutlier is TRUE, the functions fixes outliers of both the methylated and unmethylated channels when small intensities are close to zero.
+If removeBadSamples is TRUE, it removes bad samples using the QC criterion discussed previously
+Performs stratified subset quantile normalization if quantileNormalize=TRUE and stratified=TRUE
+Predicts the sex (if not provided in the sex argument) using the function getSex and normalizes males and females separately for the probes on the X and Y chromosomes
+```{r, warning=FALSE}
+#GRset.quantile <- preprocessQuantile(RGSet, fixOutliers = TRUE,
+  #removeBadSamples = TRUE, badSampleCutoff = 10.5,
+  #quantileNormalize = TRUE, stratified = TRUE, 
+  #mergeManifest = FALSE, sex = NULL)
+
+GRset.quantile_only <- preprocessQuantile(mSetSqFlt, verbose = T)
+```
+  Input: RGChannelSet
+  Output: GenomicRatioSet
+
+
+
+## 5.5 preprocessNoob+quantile
+The function preprocessNoob implements the noob background subtraction method with dye-bias normalization discussed in (Timothy J Triche et al. 2013). Briefly, the background subtraction method estimates background noise from the out-of-band probes and remove it for each sample separately, while the dye-bias normalization utilizes a subset of the control probes to estimate the dye bias. By default, the function will perform both procedures:
+```{r, warning=FALSE}
+MSet.noob <- preprocessNoob(mSetSqFlt)
+GRset.quantile_noob <- preprocessQuantile(MSet.noob, verbose = T) 
+```
+  Input: RGChannelSet
+  Output: MethylSet
+
+
+
+## 5.6 preprocessFunnorm
+The function preprocessFunnorm implements the functional normalization algorithm developed in (Jean-Philippe Fortin et al. 2014). Briefly, it uses the internal control probes present on the array to infer between-array technical variation. It is particularly useful for studies comparing conditions with known large-scale differences, such as cancer/normal studies, or between-tissue studies. It has been shown that for such studies, functional normalization outperforms other existing approaches (Jean-Philippe Fortin et al. 2014). By default, the function applies the preprocessNoob function as a first step for background substraction, and uses the first two principal components of the control probes to infer the unwanted variation.
+```{r, warning=FALSE}
+#GRset.funnorm <- preprocessFunnorm(RGSet)
+```
+  Input: RGChannelSet
+  Output: GenomicRatioSet
+  
+  
+
+```{r, warning=FALSE}
+# Compare the different norm methods. In this case I choose noob+quantile
+
+densityPlot(MSet, sampGroups = phenoData$Sample_Name)
+densityPlot(getBeta(GRset.quantile_noob))
+densityPlot(getBeta(GRset.quantile_only))
+```
+  
+
+
+Compare with the unnormalized data to visualize the effect of the
+normalization. First a comparison of the Beta distributions for the
+different probe designs. This will give an indication of the
+effectiveness of the within-array normalization.
+```{r, warning=FALSE}
+#par(mfrow=c(1,2))
+# Plot distributions prior to normalization for sample 1
+#plotBetasByType(MSet[,1],main="Raw")
+#plotBetasByType(getBeta(GRset.funnorm)[,1], probeTypes = probeTypes, main="Normalized",)
+#plotBetasByType(getBeta(GRset.quantile_noob)[,1], probeTypes = probeTypes, main="Normalized",)
+#plotBetasByType(getBeta(GRset.quantile_only)[,1], probeTypes = probeTypes, main="Normalized",)
+
+
+# The normalized object is a GenomicRatioSet which does not contain
+# the necessary probe info, we need to extract this from the MethylSet first.
+#typeI <- getProbeInfo(MSet, type = "I")[, c("Name","nCpG")]
+#typeII <- getProbeInfo(MSet, type = "II")[, c("Name","nCpG")]
+#probeTypes <- rbind(typeI, typeII)
+#probeTypes$Type <- rep(x = c("I", "II"), times = c(nrow(typeI), nrow(typeII)))
+# Now plot the distributions of the normalized data for sample 1
+#plotBetasByType(getBeta(mSetSq)[,1], probeTypes = probeTypes, main="Normalized",)
+```
+
+
+
+Does it look like the normalization brought the distributions closer to
+each other? Now let's see how the between-array normalization worked...
+```{r, warning=FALSE}
+# visualise what the data looks like before and after normalisation
+#par(mfrow=c(1,2))
+#densityPlot(mSetSqFlt, sampGroups=targets$Sample_Group,main="Raw", legend=FALSE)
+#legend("top", legend = levels(factor(targets$Treatment)),
+#       text.col=brewer.pal(8,"Dark2"))
+
+#densityPlot(getBeta(GRset.quantile_noob), sampGroups=targets$Treatment,
+#            main="noob+quantile", legend=FALSE)
+#legend("top", legend = levels(factor(targets$Treatment)),
+#       text.col=brewer.pal(8,"Dark2"))
+
+#densityPlot(getBeta(GRset.quantile_only), sampGroups=targets$Treatment,
+#            main="quantile", legend=FALSE)
+#legend("top", legend = levels(factor(targets$Treatment)),
+#       text.col=brewer.pal(8,"Dark2"))
+```
+
+
+Filter and Get beta values with the selected normalization method
+```{r, warning=FALSE}
+# betas_noob <- getBeta(GRset.quantile_noob)
+# betas_noob <- DMRcate::rmSNPandCH(betas_noob, dist = 2, mafcut = 0.05, and = TRUE, rmcrosshyb = TRUE, rmXY=TRUE)
+# 
+# betas_noob_df <- as.data.frame(betas_noob)
+# betas_noob_df$cg_name <- rownames(betas_noob_df)
+
+#setwd("/media/data/Analyses/Projects/Transdifferentiation/Aleksey_shTET2/Meth_july_22/all_time_points/Results_feb_2023")
+#writexl::write_xlsx(betas_df, "betaValues.xlsx")
+```
+
+```{r, warning=FALSE}
+betas <- getBeta(GRset.quantile_noob)
+betas <- DMRcate::rmSNPandCH(betas, dist = 2, mafcut = 0.05, and = TRUE, rmcrosshyb = TRUE, rmXY=TRUE)
+
+betas_df_Gemma <- as.data.frame(betas)
+#betas_df_Gemma$cg_name <- rownames(betas_df_Gemma)
+
+setwd("C:/Users/annav/Documents/Gemma_project/GEO_submission/Methylation_arrays/")
+write.table(betas_df_Gemma, "betaValues.txt", quote = F, sep = "\t", col.names = T)
+
+
+
+# betas_df_Gemma[grep("cg23096130", rownames(betas_df_Gemma)), ]
+
+
+
+# betas_without_bad_sample <- getBeta(GRset.quantile_noob)
+# betas_without_bad_sample <- DMRcate::rmSNPandCH(betas_without_bad_sample, dist = 2, mafcut = 0.05, and = TRUE, rmcrosshyb = TRUE, rmXY=TRUE)
+
+
+
+
+
+
+
+
+# cg_pattern <- c("cg01136754|cg07660664|cg15729736|cg17727262|cg20581146|cg20777388|cg23096130|cg26572165|cg13143320")
+# subset_df <- betas_df_Gemma[grep(cg_pattern, rownames(betas_df_Gemma)), ]
+# 
+# setwd("C:/Users/annav/Documents/Gemma_project/Methylation_arrays")
+# writexl::write_xlsx(subset_df, "betaValues_selected_CGs.xlsx")
+```
+
+
+# Get methylation levels for overlapping CGs (overlap with diff peaks Cas9)
+```{r}
+#read diff peak file
+diffPeaks_cas9 <- read.table("C:/Users/annav/Documents/Gemma_project/ChIPseq/overlapping_diffPeaks_CGs/CgS_on_cas9_peaksDiff_coord_all_coordinates.bed", sep="\t")
+colnames(diffPeaks_cas9) <- c("chrom", "start", "end", "cg_name")
+head(diffPeaks_cas9)
+head(betas_df_Gemma)
+
+merged <- merge(diffPeaks_cas9, betas_df_Gemma, by = "cg_name")
+head(merged)
+dim(merged)
+
+writexl::write_xlsx(merged, "C:/Users/annav/Documents/Gemma_project/ChIPseq/overlapping_diffPeaks_CGs/merged.xlsx")
+```
+
+Get M values 
+```{r, warning=FALSE}
+# mVals <- getM(GRset.quantile_only)
+# mVals <- DMRcate::rmSNPandCH(mVals, dist = 2, mafcut = 0.05, and = TRUE, rmcrosshyb = TRUE, rmXY=TRUE)
+
+#mVals_df <- as.data.frame(mVals)
+#mVals_df$cg_name <- rownames(mVals_df)
+#setwd("/media/data/Analyses/Projects/Transdifferentiation/Aleksey_shTET2/Meth_july_22/all_time_points/Results_feb_2023")
+#writexl::write_xlsx(mVals_df, "betaValues.xlsx")
+```
+
+
+# PCA with normalized beta values
+```{r}
+## 1
+l <- as.matrix(betas)
+pca <- prcomp(t(na.omit(l)))
+plot(pca$x[,1],pca$x[,2],cex=.2)
+text(pca$x[,1],pca$x[,2],labels=rownames(pca$x),cex=1)
+
+
+# ## 2
+# library(stats)
+# data <- t(betas)
+# pca_result <- prcomp(l, scale. = TRUE)  # Scale the data if needed
+# # Biplot: Visualizing PC scores and loadings
+# biplot(pca_result, scale = 0, pc.biplot = TRUE)
+# 
+# # Accessing PCA results
+# pc_scores <- pca_result$x  # Principal component scores (coordinates of samples in PC space)
+# pc_variances <- pca_result$sdev^2  # Variance explained by each PC
+# pc_proportion_var <- pc_variances / sum(pc_variances)  # Proportion of variance explained by each PC
+# # Visualize scree plot to understand variance explained by each PC
+# plot(1:length(pc_variances), pc_variances, type = "b", xlab = "Principal Component", ylab = "Variance Explained")
+# # Scatterplot: Visualizing PC scores
+# library(ggplot2)
+# pc_df <- data.frame(Sample = rownames(pc_scores), PC1 = pc_scores[, 1], PC2 = pc_scores[, 2])  # Creating a data frame for PC scores
+# ggplot(pc_df, aes(x = PC1, y = PC2)) +
+#   geom_point() +
+#   labs(x = "PC1", y = "PC2")
+# 
+# 
+# ggplot(pc_df, aes(x = PC1, y = PC2)) +
+#   geom_point() +
+#   labs(x = "PC1", y = "PC2")
+
+
+
+
+## 3
+setwd("C:/Users/annav/Documents/Gemma_project/Methylation_arrays/Dec_2023/Samples/")
+pdf("PCA_allSamples_NT_sg.pdf")
+pca <- FactoMineR::PCA(t(l), scale.unit = T, graph = F, ncp = 40)
+factoextra::fviz_pca_ind(pca, axes = c(1,2), habillage=as.factor(targets_filt$Condition), repel = T)
+dev.off()
+```
+
+
+
+
+
+
+
+# 6. DATA EXPLORATION
+After normalization of your data is a good time to look at the
+similarities and differences between the various samples. One way to do
+this is by creating a MDS or Multi-Dimenional Scaling plot. This is a
+method to graphically represent relationships between objects (here the
+different samples) in multidimensional space onto 2 or 3 di mensional
+space. Dimension one (or principal component one) captures the greatest
+source of variation in the data, dimension two captures the second
+greatest source of variation in the data and so on. Colouring the data
+points or labels by known factors of interest can often highlight
+exactly what the greatest sources of variation are in the data. In a
+good quality dataset, one would hope that biological differences would
+show up as one of the greatest sources of variation. It is also possible
+to us e MDS plots to decipher sample mix-ups. The following code creates
+the MDS plot twice but the samples in the left plot are colored
+according to celltype, while the plot on the right is colored according
+to "individual". Before you proceed think a moment about what this
+figure tells you about the sources in variation in the data. Try c
+hanging the dim=c(1,2) parameter to for example dim=c(1,3) or other
+values to get an even deeper understanding of the variation in the data.
+```{r, warning=FALSE}
+# MDS plots to look at largest sources of variation
+# Create color panel
+pal <- brewer.pal(8,"Dark2")
+# # Plot figures
+par(mfrow=c(1,2))
+plotMDS(getM(mSetSqFlt), top=1000, gene.selection="common",
+       col=pal[factor(phenoData$Condition)], dim=c(1,2))
+legend("top", legend=levels(factor(phenoData$Condition)), text.col=pal,
+      bg="white", cex=0.7)
+ 
+plotMDS(getM(mSetSq), top=1000, gene.selection="common",
+       col=pal[factor(phenoData$Condition)], dim=c(1,2))
+legend("top", legend=levels(factor(phenoData$Condition)), text.col=pal,
+      bg="white", cex=0.7)
+```
+
+
+
+
+
+## 6.2 Remove probes at sexual chromosomes, SNPS and cross-hybrydyzed probes
+```{r, warning=FALSE}
+# calculate M-values for statistical analysis: as previously mentioned, M-values have nicer statistical properties and are thus better for use in statistical analysis of methylation data
+# Mvalues calculated from the nor
+#bVals <- getBeta(GRset.quantile_noob)
+#betas_filt <- DMRcate::rmSNPandCH(bVals, dist = 2, mafcut = 0.05, and = TRUE, rmcrosshyb = TRUE, rmXY=TRUE)
+```
+
+
+
+# PCA
+```{r, warning=FALSE}
+setwd("C:/Users/annav/Documents/Gemma_project/Methylation_arrays/")
+pdf("PCA_DNA_methylation_without_sg_4d_r4.pdf")
+pca <- FactoMineR::PCA(t(as.matrix(betas_without_bad_sample)), scale.unit = T, graph = F, ncp = 40)
+factoextra::fviz_pca_ind(pca, axes = c(1,2), habillage=as.factor(targets_filt$Condition), repel = T)
+dev.off()
+```
+
+
+
+# Correlation plot (probar con el raw)
+```{r}
+RSet <- ratioConvert(MSet, what = "both", keepCN = TRUE)
+RSet
+raw_beta <- getBeta(RSet)
+
+library(corrplot)
+
+matrix <- cor(raw_beta)
+
+
+
+corrplot(matrix, method = "color", type = "upper", tl.col = "black", tl.srt = 45)
+
+
+```
+
+
+```{r}
+library(corrplot)
+
+betas_df_Gemma <- betas_df_Gemma[,-c(25)]
+
+betas_df_Gemma_0h_3d <- betas_df_Gemma[,-c(17:24)]
+
+matrix <- cor(betas_df_Gemma_0h_3d)
+
+setwd("C:/Users/annav/Documents/Gemma_project/Methylation_arrays/")
+pdf("Meth_corrplot_0h_3d.pdf")
+pheatmap(matrix)
+dev.off()
+```
+# Clustering Dendogram
+```{r}
+betas_df_Gemma_matrix <- as.matrix(betas_df_Gemma)
+dd <- dist(betas_df_Gemma)
+hc <- hclust(dd)
+```
+
+# 7. DMPs
+```{r, warning=FALSE}
+head(betas)
+targets
+
+# Set up the design matrix for the Differential Methylation analysis
+# Define the factor of targets
+Group <- factor(targets_filt$Condition)
+Group
+# Define is the individual effect that we need to account for
+#individual <- factor(targets_filt$Slide)
+# use the above to create a design matrix
+design <- model.matrix(~0+Group, data=targets_filt)
+design
+colnames(design) <- c(levels(Group))
+design
+
+# fit the actual linear model to the data
+fit <- lmFit(betas, design)
+fit
+```
+
+```{r, warning=FALSE}
+# create a contrast matrix for specific comparisons
+contMatrix <- makeContrasts("sg_0h-NT_0h",
+                            "sg_3D-NT_3D",
+                            "sg_7D-NT_7D",
+                           levels=design)
+contMatrix
+```
+
+```{r, warning=FALSE}  
+# fit the contrasts
+fit2 <- contrasts.fit(fit, contMatrix)
+# Rank genes
+fit2 <- eBayes(fit2)
+fit2
+```
+
+
+Without contrast
+```{r, warning=FALSE}  
+
+# Rank genes
+fit2_v2 <- eBayes(fit)
+
+fit2_v2
+fit2
+```
+
+
+```{r, warning=FALSE}
+DMPs_0h <- topTable(fit2, num=Inf, coef=1, sort.by="P",adjust.method = "BH")
+dim(subset(DMPs_0h,DMPs_0h$adj.P.Val<.05)) #1
+dim(subset(DMPs_0h,DMPs_0h$P.Value<.01)) #14211     
+DMPs_0h_FDR <- subset(DMPs_0h,DMPs_0h$adj.P.Val<.05)
+
+DMPs_3D <- topTable(fit2, num=Inf, coef=2, sort.by="P",adjust.method = "BH")
+dim(subset(DMPs_3D,DMPs_3D$adj.P.Val<.05)) #26905 
+dim(subset(DMPs_3D,DMPs_3D$P.Value<.01)) #55684
+DMPs_3D_FDR <- subset(DMPs_3D,DMPs_3D$adj.P.Val<.05)
+
+DMPs_7D <- topTable(fit2, num=Inf, coef=3, sort.by="P",adjust.method = "BH")
+dim(subset(DMPs_7D,DMPs_7D$adj.P.Val<.05)) #7712 
+dim(subset(DMPs_7D,DMPs_7D$P.Value<.01)) #26349
+DMPs_7D_FDR <- subset(DMPs_7D,DMPs_7D$adj.P.Val<.05)
+```
+
+
+# 7. DMPs between timepoints
+```{r, warning=FALSE}
+head(betas)
+targets
+
+# Set up the design matrix for the Differential Methylation analysis
+# Define the factor of targets
+Group <- factor(targets$Condition)
+Group
+# Define is the individual effect that we need to account for
+#individual <- factor(targets_filt$Slide)
+# use the above to create a design matrix
+design <- model.matrix(~0+Group, data=targets)
+design
+colnames(design) <- c(levels(Group))
+design
+
+# fit the actual linear model to the data
+fit <- lmFit(betas, design)
+fit
+```
+
+```{r, warning=FALSE}
+# create a contrast matrix for specific comparisons
+contMatrix <- makeContrasts("sg_0h-sg_3D",
+                            "sg_0h-sg_7D",
+                            "sg_3D-sg_7D",
+                           levels=design)
+contMatrix
+```
+
+```{r, warning=FALSE}  
+# fit the contrasts
+fit2 <- contrasts.fit(fit, contMatrix)
+# Rank genes
+fit2 <- eBayes(fit2)
+fit2
+```
+
+
+Without contrast
+```{r, warning=FALSE}  
+
+# Rank genes
+fit2_v2 <- eBayes(fit)
+
+fit2_v2
+fit2
+```
+
+
+```{r, warning=FALSE}
+DMPs_0h <- topTable(fit2, num=Inf, coef=1, sort.by="P",adjust.method = "BH")
+dim(subset(DMPs_0h,DMPs_0h$adj.P.Val<.05)) #1
+dim(subset(DMPs_0h,DMPs_0h$P.Value<.01)) #14211     
+DMPs_0h_FDR <- subset(DMPs_0h,DMPs_0h$adj.P.Val<.05)
+
+DMPs_3D <- topTable(fit2, num=Inf, coef=2, sort.by="P",adjust.method = "BH")
+dim(subset(DMPs_3D,DMPs_3D$adj.P.Val<.05)) #26905 
+dim(subset(DMPs_3D,DMPs_3D$P.Value<.01)) #55684
+DMPs_3D_FDR <- subset(DMPs_3D,DMPs_3D$adj.P.Val<.05)
+
+DMPs_7D <- topTable(fit2, num=Inf, coef=3, sort.by="P",adjust.method = "BH")
+dim(subset(DMPs_7D,DMPs_7D$adj.P.Val<.05)) #7712 
+dim(subset(DMPs_7D,DMPs_7D$P.Value<.01)) #26349
+DMPs_7D_FDR <- subset(DMPs_7D,DMPs_7D$adj.P.Val<.05)
+```
+
+```{r}
+# dim(DMPs_0h_FDR[DMPs_0h_FDR$logFC >= 0.2 | DMPs_0h_FDR$logFC <= -0.2,])
+# dim(DMPs_3D_FDR[DMPs_3D_FDR$logFC >= 0.2 | DMPs_3D_FDR$logFC <= -0.2,])
+# dim(DMPs_7D_FDR[DMPs_7D_FDR$logFC >= 0.2 | DMPs_7D_FDR$logFC <= -0.2,])
+
+dim(DMPs_0h_FDR[DMPs_0h_FDR$logFC >= 0.2,])
+dim(DMPs_3D_FDR[DMPs_3D_FDR$logFC >= 0.2,])
+dim(DMPs_7D_FDR[DMPs_7D_FDR$logFC >= 0.2,])
+```
+
+
+
+```{r}
+# dim(DMPs_0h_FDR[DMPs_0h_FDR$logFC >= 0.3 | DMPs_0h_FDR$logFC <= -0.3,])
+# dim(DMPs_3D_FDR[DMPs_3D_FDR$logFC >= 0.3 | DMPs_3D_FDR$logFC <= -0.3,])
+# dim(DMPs_7D_FDR[DMPs_7D_FDR$logFC >= 0.3 | DMPs_7D_FDR$logFC <= -0.3,])
+
+dim(DMPs_0h_FDR[DMPs_0h_FDR$logFC >= 0.3,])
+dim(DMPs_3D_FDR[DMPs_3D_FDR$logFC >= 0.3,])
+dim(DMPs_7D_FDR[DMPs_7D_FDR$logFC >= 0.3,])
+```
+
+Annotate
+# Annotate DMPs table
+```{r}
+DMPs_2_7d <- merge(DMPs_7D_FDR_annot_betaValues,ann_epicV2[,c("chr", "UCSC_RefGene_Name","GencodeV41_Name","Relation_to_Island", "Regulatory_Feature_Group", "pos", "Name", "EPICv1_Loci")], by="row.names")
+rownames(DMPs_2_7d) <- DMPs_2_7d$Row.names
+DMPs_2_7d <- DMPs_2_7d[,-1]
+```
+
+```{r, warning=FALSE}
+DMPs_0h_3d <- topTable(fit2, num=Inf, coef=1, sort.by="P",adjust.method = "BH")
+dim(subset(DMPs_0h_3d,DMPs_0h_3d$adj.P.Val<.05)) #52588     
+dim(subset(DMPs_0h_3d,DMPs_0h_3d$P.Value<.01)) #87586          
+DMPs_0h_3d_pVal <- subset(DMPs_0h_3d,DMPs_0h_3d$P.Value<.01)
+
+DMPs_0h_7d <- topTable(fit2, num=Inf, coef=2, sort.by="P",adjust.method = "BH")
+dim(subset(DMPs_0h_7d,DMPs_0h_7d$adj.P.Val<.05)) #54484      
+dim(subset(DMPs_0h_7d,DMPs_0h_7d$P.Value<.01)) #89658     
+DMPs_0h_7d_pVal <- subset(DMPs_0h_7d,DMPs_0h_7d$P.Value<.01)
+
+DMPs_3d_7d <- topTable(fit2, num=Inf, coef=3, sort.by="P",adjust.method = "BH")
+dim(subset(DMPs_3d_7d,DMPs_3d_7d$adj.P.Val<.05)) #26187      
+dim(subset(DMPs_3d_7d,DMPs_3d_7d$P.Value<.01)) #56093     
+DMPs_3d_7d_pVal <- subset(DMPs_3d_7d,DMPs_3d_7d$P.Value<.01)
+```
+
+Filtering logFC
+```{r}
+dim(DMPs_0h_3d_pVal[DMPs_0h_3d_pVal$logFC >= 0.2 | DMPs_0h_3d_pVal$logFC <= -0.2,])
+dim(DMPs_0h_7d_pVal[DMPs_0h_7d_pVal$logFC >= 0.2 | DMPs_0h_7d_pVal$logFC <= -0.2,])
+dim(DMPs_3d_7d_pVal[DMPs_3d_7d_pVal$logFC >= 0.2 | DMPs_3d_7d_pVal$logFC <= -0.2,])
+```
+
+```{r}
+dim(DMPs_0h_3d_pVal[DMPs_0h_3d_pVal$logFC >= 0.5 | DMPs_0h_3d_pVal$logFC <= -0.5,])
+dim(DMPs_0h_7d_pVal[DMPs_0h_7d_pVal$logFC >= 0.5 | DMPs_0h_7d_pVal$logFC <= -0.5,])
+dim(DMPs_3d_7d_pVal[DMPs_3d_7d_pVal$logFC >= 0.5 | DMPs_3d_7d_pVal$logFC <= -0.5,])
+```
+
+
+
+
+
+
+# 8. Heatmap
+```{r}
+targets
+annot<-targets[,c(1,3)]
+colnames(annot)[1]<-"ID"
+rownames(annot)<-annot$ID
+
+# Select beta values from DMPs 0h
+betas_ordered <- betas[order(rownames(betas)),]
+
+betas_dmp <- as.data.frame(betas_ordered[rownames(betas_ordered) %in% rownames(DMPs_sg_vs_NT_pValue) ,])
+samples<-ifelse(targets$Condition=="NT","blue1","red")
+ 
+
+# head(DMPs_0h_pValue)
+# my.data[,1:16] <- sapply(my.data[,1:16],as.numeric)
+# head(my.data)
+
+# my.data_ox_5mC_GFPneg <- my.data[,c(7,12,15,2)]
+
+data <- t(scale(t(betas_ordered))) # z-score normalise each row (feature)
+data <- apply(data, 2, function(x) ifelse(x > 4, 4, x)) # compress data within range
+data <- apply(data, 2, function(x) ifelse(x < -4, -4, x)) # compress data within range
+
+
+spcol<-samples
+cols <- colorRampPalette(brewer.pal(10, "RdBu"))(256)
+
+#setwd("/media/data/Analyses/CRG_meth_Bernhard_colab/Meth_sept_2022")
+#pdf("Control_IFN_ox_5mC_GFPneg_heatmap.pdf", width = 8, height = 6)
+heatmap.2x(as.matrix(data), col=rev(cols), Colv = F,Rowv=TRUE, scale="none", ColSideColors=spcol,
+           trace="none", dendrogram="both", 
+           cexRow=1, cexCol=0.9,
+           #labCol=NA,
+           labRow=NA, 
+           density.info="none",
+           hclust=function(x) hclust(x,method="complete"),
+           distfun=function(x) as.dist((1-cor(t(x)))/2),srtCol=45, margins=c(5,15))
+#dev.off()
+```
+
+
+# Annotate beta values table
+```{r}
+betas_ordered <- betas[order(rownames(betas)),]
+ann_epicV2 <- ann_epicV2[order(rownames(ann_epicV2)),]
+
+betaValues_annot <- merge(betas_ordered, ann_epicV2[,c("chr", "pos", "UCSC_RefGene_Name","GencodeV41_Name","Relation_to_Island", "Regulatory_Feature_Group", "pos", "Name", "EPICv1_Loci")], by="row.names")
+rownames(betaValues_annot) <- betaValues_annot$Row.names
+betaValues_annot <- betaValues_annot[,-1]
+
+
+setwd("C:/Users/annav/Documents/Gemma_project/Methylation_arrays/Dec_2023/Samples/")
+writexl::write_xlsx(betaValues_annot, "betaValues_table.xlsx")
+
+
+
+
+IL1RN <- betaValues_annot %>%
+  filter(str_detect(betaValues_annot$UCSC_RefGene_Name, "IL1RN"))
+
+
+AIFL <- betaValues_annot %>%
+  filter(str_detect(betaValues_annot$UCSC_RefGene_Name, "AIFL"))
+
+
+PER1 <- betaValues_annot %>%
+  filter(str_detect(betaValues_annot$UCSC_RefGene_Name, "PER1"))
+
+
+CCDC12 <- betaValues_annot %>%
+  filter(str_detect(betaValues_annot$UCSC_RefGene_Name, "CCDC12"))
+
+
+setwd("C:/Users/annav/Documents/Gemma_project/Methylation_arrays/Dec_2023/Samples/")
+writexl::write_xlsx(IL1RN, "IL1RN.xlsx")
+
+setwd("C:/Users/annav/Documents/Gemma_project/Methylation_arrays/Dec_2023/Samples/")
+writexl::write_xlsx(PER1, "PER1.xlsx")
+
+setwd("C:/Users/annav/Documents/Gemma_project/Methylation_arrays/Dec_2023/Samples/")
+writexl::write_xlsx(CCDC12, "CCDC12.xlsx")
+```
+
+
+# Annotate DMPs table
+```{r}
+DMPs_2_7d <- merge(DMPs_7D_FDR_annot_betaValues,ann_epicV2[,c("chr", "UCSC_RefGene_Name","GencodeV41_Name","Relation_to_Island", "Regulatory_Feature_Group", "pos", "Name", "EPICv1_Loci")], by="row.names")
+rownames(DMPs_2_7d) <- DMPs_2_7d$Row.names
+DMPs_2_7d <- DMPs_2_7d[,-1]
+```
+
+```{r}
+DMPs_3D_FDR_annot <- merge(DMPs_3D_FDR,ann_epicV2[,c("chr", "UCSC_RefGene_Name","GencodeV41_Name","Relation_to_Island", "Regulatory_Feature_Group", "pos", "Name", "EPICv1_Loci")], by="row.names")
+rownames(DMPs_3D_FDR_annot) <- DMPs_3D_FDR_annot$Row.names
+DMPs_3D_FDR_annot <- DMPs_3D_FDR_annot[,-1]
+dim(DMPs_3D_FDR_annot)
+head(DMPs_3D_FDR_annot)
+```
+
+```{r}
+DMPs_7D_FDR_annot <- merge(DMPs_7D_FDR,ann_epicV2[,c("chr", "UCSC_RefGene_Name","GencodeV41_Name","Relation_to_Island", "Regulatory_Feature_Group", "pos", "Name", "EPICv1_Loci")], by="row.names")
+rownames(DMPs_7D_FDR_annot) <- DMPs_7D_FDR_annot$Row.names
+DMPs_7D_FDR_annot <- DMPs_7D_FDR_annot[,-1]
+```
+
+```{r}
+DMPs_7D_all_annot <- merge(DMPs_7D,ann_epicV2[,c("chr", "UCSC_RefGene_Name","GencodeV41_Name","Relation_to_Island", "Regulatory_Feature_Group", "pos", "Name", "EPICv1_Loci")], by="row.names")
+rownames(DMPs_7D_all_annot) <- DMPs_7D_all_annot$Row.names
+DMPs_7D_all_annot <- DMPs_7D_all_annot[,-1]
+```
+
+```{r}
+M = cor(betas_without_bad_sample_df )
+corrplot(M, method = 'color')
+```
+
+# Include Annotation as peaks
+```{r}
+library(ChIPseeker)
+require(TxDb.Hsapiens.UCSC.hg38.knownGene)
+txdb <- TxDb.Hsapiens.UCSC.hg38.knownGene
+library(org.Hs.eg.db)
+
+annotate <- as.data.frame(DMPs_2_7d)
+annotate$cg_name <- rownames(annotate)
+
+annotate$end <- annotate$pos + 1
+
+annotate2 <- annotate[c(7,12,16,1:6,8:11,13:15)]
+head(annotate2)
+
+colnames(annotate2)[1]<-"chrom"
+colnames(annotate2)[2]<-"start"
+colnames(annotate2)[3]<-"end"
+
+annotate2 <- GRanges(annotate2)
+head(annotate2)
+
+peakAnno <- annotatePeak(annotate2, tssRegion=c(-3000, 3000),
+                         TxDb=txdb, annoDb="org.Hs.eg.db")
+
+DMPs_0h_FDR_annot_peak <- as.data.frame(peakAnno)
+```
+
+```{r}
+library(ChIPseeker)
+require(TxDb.Hsapiens.UCSC.hg38.knownGene)
+txdb <- TxDb.Hsapiens.UCSC.hg38.knownGene
+library(org.Hs.eg.db)
+
+annotate <- as.data.frame(DMPs_3D_FDR_annot)
+annotate$cg_name <- rownames(annotate)
+
+annotate$end <- annotate$pos + 1
+
+annotate2 <- annotate[c(7,12,16,1:6,8:11,13:15)]
+head(annotate2)
+
+colnames(annotate2)[1]<-"chrom"
+colnames(annotate2)[2]<-"start"
+colnames(annotate2)[3]<-"end"
+
+annotate2 <- GRanges(annotate2)
+head(annotate2)
+
+peakAnno <- annotatePeak(annotate2, tssRegion=c(-3000, 3000),
+                         TxDb=txdb, annoDb="org.Hs.eg.db")
+
+DMPs_3D_FDR_annot_peak <- as.data.frame(peakAnno)
+```
+
+```{r}
+library(ChIPseeker)
+require(TxDb.Hsapiens.UCSC.hg38.knownGene)
+txdb <- TxDb.Hsapiens.UCSC.hg38.knownGene
+library(org.Hs.eg.db)
+
+annotate <- as.data.frame(DMPs_7D_FDR_annot)
+annotate$cg_name <- rownames(annotate)
+
+annotate$end <- annotate$pos + 1
+
+annotate2 <- annotate[c(7,12,16,1:6,8:11,13:15)]
+head(annotate2)
+
+colnames(annotate2)[1]<-"chrom"
+colnames(annotate2)[2]<-"start"
+colnames(annotate2)[3]<-"end"
+
+annotate2 <- GRanges(annotate2)
+head(annotate2)
+
+peakAnno <- annotatePeak(annotate2, tssRegion=c(-3000, 3000),
+                         TxDb=txdb, annoDb="org.Hs.eg.db")
+
+DMPs_7D_FDR_annot_peak <- as.data.frame(peakAnno)
+```
+
+
+```{r}
+library(ChIPseeker)
+require(TxDb.Hsapiens.UCSC.hg38.knownGene)
+txdb <- TxDb.Hsapiens.UCSC.hg38.knownGene
+library(org.Hs.eg.db)
+
+annotate <- as.data.frame(DMPs_7D_all_annot)
+annotate$cg_name <- rownames(annotate)
+
+annotate$end <- annotate$pos + 1
+
+annotate2 <- annotate[c(7,12,16,1:6,8:11,13:15)]
+head(annotate2)
+
+colnames()[1]<-"chrom"
+colnames(annotate2)[2]<-"start"
+colnames(annotate2)[3]<-"end"
+
+annotate2 <- GRanges(annotate2)
+head(annotate2)
+
+peakAnno <- annotatePeak(annotate2, tssRegion=c(-3000, 3000),
+                         TxDb=txdb, annoDb="org.Hs.eg.db")
+
+DMPs_7D_all_annot <- as.data.frame(annotate2)
+```
+
+# Add beta values on DMPs table
+```{r}
+betas_ordered <- betas[order(rownames(betas)),]
+
+
+betas2test <- as.data.frame(betas_ordered)
+head(betas2test)
+betas2test$cg_name <- rownames(betas2test)
+
+#DMPs_0h_FDR_annot_peak$cg_name <- rownames(DMPs_0h_FDR_annot_peak)
+DMPs_0h_3d_pVal_bv <- merge(DMPs_0h_3d_pVal, betas2test, by = "row.names" )
+DMPs_0h_7d_pVal_bv <- merge(DMPs_0h_7d_pVal, betas2test, by = "row.names" )
+DMPs_3d_7d_pVal_bv <- merge(DMPs_3d_7d_pVal, betas2test, by = "row.names" )
+
+
+
+dim(DMPs_0h_3d_pVal_bv[DMPs_0h_3d_pVal_bv$logFC >= 0.5 | DMPs_0h_3d_pVal_bv$logFC <= -0.5,])
+dim(DMPs_0h_7d_pVal_bv[DMPs_0h_7d_pVal_bv$logFC >= 0.5 | DMPs_0h_7d_pVal_bv$logFC <= -0.5,])
+dim(DMPs_3d_7d_pVal_bv[DMPs_3d_7d_pVal_bv$logFC >= 0.5 | DMPs_3d_7d_pVal_bv$logFC <= -0.5,])
+
+
+
+
+
+ann_epicV2 <- ann_epicV2[order(rownames(ann_epicV2)),]
+
+
+rownames(DMPs_0h_3d_pVal_bv) <- DMPs_0h_3d_pVal_bv$cg_name
+DMPs_0h_3d_pVal_bv <- DMPs_0h_3d_pVal_bv[,-1]
+DMPs_0h_3d_pVal_bv_2 <- merge(DMPs_0h_3d_pVal_bv,ann_epicV2[,c("EPICv1_Loci")], by="row.names")
+DMPs_0h_3d_pVal_bv_2 <- DMPs_0h_3d_pVal_bv_2[,-1]
+
+
+DMPs_0h_7d_pVal_bv_2 <- merge(DMPs_0h_7d_pVal_bv,ann_epicV2[,c("EPICv1_Loci")], by="row.names")
+rownames(DMPs_0h_7d_pVal_bv_2) <- DMPs_0h_7d_pVal_bv_2$Row.names
+DMPs_0h_7d_pVal_bv_2 <- DMPs_0h_7d_pVal_bv_2[,-1]
+
+
+DMPs_3d_7d_pVal_bv_2 <- merge(DMPs_3d_7d_pVal_bv,ann_epicV2[,c("EPICv1_Loci")], by="row.names")
+rownames(DMPs_3d_7d_pVal_bv_2) <- DMPs_3d_7d_pVal_bv_2$Row.names
+DMPs_3d_7d_pVal_bv_2 <- DMPs_3d_7d_pVal_bv_2[,-1]
+
+# setwd("C:/Users/annav/Documents/Gemma_project/Methylation_arrays/Dec_2023/Results/")
+# writexl::write_xlsx(DMPs_0h_FDR_annot_betaValues, "DMPs_0h_sg_vs_NT_FDR_0.05_annotated_EPICv2.xlsx")
+```
+
+```{r}
+betas_ordered <- betas[order(rownames(betas)),]
+
+betas2test <- as.data.frame(betas_ordered)
+head(betas2test)
+
+betas2test$cg_name <- rownames(betas2test)
+DMPs_3D_FDR_annot_peak$cg_name <- DMPs_3D_FDR_annot_peak$Name
+
+DMPs_3D_FDR_annot_betaValues <- merge(DMPs_3D_FDR_annot_peak, betas2test, by = "cg_name" )
+
+dim(DMPs_3D_FDR_annot_betaValues)
+
+
+setwd("C:/Users/annav/Documents/Gemma_project/Methylation_arrays/Dec_2023/Results/")
+writexl::write_xlsx(DMPs_3D_FDR_annot_betaValues, "DMPs_3D_sg_vs_NT_FDR_0.05_annotated_EPICv2_new_analysis.xlsx")
+```
+
+```{r}
+betas2test <- as.data.frame(betas_without_bad_sample)
+# head(betas2test)
+
+betas2test$cg_name <- rownames(betas2test)
+df$cg_name <- rownames(df)
+
+DMPs_7D_FDR_annot_betaValues <- merge(df, betas2test, by = "cg_name" )
+
+dim(DMPs_7D_FDR_annot_betaValues)
+
+
+setwd("C:/Users/annav/Documents/Gemma_project/Methylation_arrays/Dec_2023/Results/")
+writexl::write_xlsx(DMPs_7D_FDR_annot_betaValues, "DMPs_7D_sg_vs_NT_FDR_0.05_annotated_EPICv2.xlsx")
+```
+
+```{r}
+betas2test <- as.data.frame(betas_ordered)
+head(betas2test)
+ 
+betas2test$cg_name <- rownames(betas2test)
+DMPs_7D_all_annot$cg_name <- rownames(DMPs_7D_all_annot)
+
+DMPs_7D_all_annot_betaValues <- merge(DMPs_7D_all_annot, betas2test, by = "cg_name" )
+
+dim(DMPs_7D_all_annot_betaValues)
+
+
+setwd("C:/Users/annav/Documents/Gemma_project/Methylation_arrays/Dec_2023/Results/")
+writexl::write_xlsx(DMPs_7D_all_annot_betaValues, "DMPs_7D_sg_vs_NT_all_annotated_EPICv2.xlsx")
+```
+
+
+# Quantify DMPs for each cluster
+```{r}
+dmp_all_3d_c1 <- dmp_all_3d_logFC_filt2[dmp_all_3d_logFC_filt2$logFC >= 0.15,]
+dim(dmp_all_3d_c1)
+
+dmp_all_3d_c2 <- dmp_all_3d_logFC_filt2[dmp_all_3d_logFC_filt2$logFC <= -0.15,]
+dim(dmp_all_3d_c2)
+```
+
+
+
+## GO enrichment
+```{r}
+enrichment_GO <- gometh(rownames(dmp_3d_c2),all.cpg = rownames(betas2test),collection = "GO", 
+                        array.type = "EPIC",plot.bias = T,prior.prob = T,equiv.cpg = T,anno = ann850k) 
+
+enrichment_GO<-enrichment_GO[enrichment_GO$ONTOLOGY=="BP",]
+enrichment_GO<-enrichment_GO[enrichment_GO$FDR<0.05,]
+head(enrichment_GO)
+write_xlsx(enrichment_GO,"enrichment_GO_6D.xlsx")
+```
+
+
+## Probar con clusterprofiler
+```{r}
+library(AnnotationDbi)
+library(org.Hs.eg.db)
+library(clusterProfiler)
+
+annot <- as.data.frame(dmp_3d_c1_noFilt)
+list <- as.data.frame(unique(unlist(strsplit(annot$UCSC_RefGene_Name, ";"))))
+names(list)[names(list) == 'unique(unlist(strsplit(annot$UCSC_RefGene_Name, ";")))'] <- 'Symbol'
+anno <- AnnotationDbi::select(org.Hs.eg.db, keys=list$Symbol, columns='ENTREZID', keytype='SYMBOL')
+ego_pos <- enrichGO(gene          = anno$ENTREZID,
+                    OrgDb         = org.Hs.eg.db,
+                    ont           = "ALL",
+                    pAdjustMethod = "BH",
+                    pvalueCutoff  = 0.01,
+                    qvalueCutoff  = 0.05,
+                    readable      = TRUE)
+head(ego_pos,3)
+
+annot <- as.data.frame(dmp_3d_c2_noFilt)
+list <- as.data.frame(unique(unlist(strsplit(annot$UCSC_RefGene_Name, ";"))))
+names(list)[names(list) == 'unique(unlist(strsplit(annot$UCSC_RefGene_Name, ";")))'] <- 'Symbol'
+anno <- AnnotationDbi::select(org.Hs.eg.db, keys=list$Symbol, columns='ENTREZID', keytype='SYMBOL')
+ego_pos <- enrichGO(gene          = anno$ENTREZID,
+                    OrgDb         = org.Hs.eg.db,
+                    ont           = "ALL",
+                    pAdjustMethod = "BH",
+                    pvalueCutoff  = 0.01,
+                    qvalueCutoff  = 0.05,
+                    readable      = TRUE)
+head(ego_pos,3)
+```
+
+
+
+
+# LogFC filtering
+```{r}
+DMPs_0h_FDR_logFC_filter <- DMPs_0h[DMPs_0h$logFC >= 0.3 | DMPs_0h$logFC <= -0.3,]
+DMPs_3D_FDR_logFC_filter <- DMPs_3D[DMPs_3D$logFC >= 0.3 | DMPs_3D$logFC <= -0.3,]
+DMPs_7D_FDR_logFC_filter <- DMPs_7D[DMPs_7D$logFC >= 0.3 | DMPs_7D$logFC <= -0.3,]
+
+
+dim(DMPs_7D[DMPs_7D$logFC >= 0.1 | DMPs_7D$logFC <= -0.1,])
+dim(DMPs_7D[DMPs_7D$logFC >= 0.2 | DMPs_7D$logFC <= -0.2,])
+dim(DMPs_7D[DMPs_7D$logFC >= 0.25 | DMPs_7D$logFC <= -0.25,])
+dim(DMPs_7D[DMPs_7D$logFC >= 0.3 | DMPs_7D$logFC <= -0.3,])
+
+dim(DMPs_7D[DMPs_7D$logFC >= 0.1,])
+df <- DMPs_7D[DMPs_7D$logFC >= 0.2,]
+dim(DMPs_7D[DMPs_7D$logFC >= 0.25,])
+dim(DMPs_7D[DMPs_7D$logFC >= 0.3,])
+
+
+
+
+DMPs_0h_pos <- DMPs_0h_FDR_logFC_filter[DMPs_0h_FDR_logFC_filter$logFC >= 0.3,]
+DMPs_3d_pos <- DMPs_3D_FDR_logFC_filter[DMPs_3D_FDR_logFC_filter$logFC >= 0.3,]
+DMPs_7d_pos <- DMPs_7D_FDR_logFC_filter[DMPs_7D_FDR_logFC_filter$logFC >= 0.3,]
+
+
+dim(DMPs_0h_pos)
+dim(DMPs_3d_pos)
+dim(DMPs_7d_pos)
+
+```
+
+
+
+# Scatterplot for 0d
+```{r}
+setwd("C:/Users/annav/Documents/Gemma_project/Methylation_arrays/Dec_2023/Results/")
+writexl::write_xlsx(DMPs_3D_FDR_annot_betaValues_logFC_filter, "DMPs_3D_FDR_annot_betaValues_logFC_filter.xlsx")
+data <- readxl::read_xlsx("C:/Users/annav/Documents/Gemma_project/Methylation_arrays/Dec_2023/Results/DMPs_0h_sg_vs_NT_FDR_0.05_annotated_EPICv2.xlsx")
+data <- as.data.frame(data)
+
+rownames(data) <- data$cg_name
+
+
+
+DMPs_0D_pos <- data[data$logFC >= 0.2,]
+
+
+
+
+
+setwd("C:/Users/annav/Documents/Gemma_project/Methylation_arrays/Dec_2023/Results")
+pdf("DNA_methylation_0d_sg_vs_nt_scatterPlot.pdf")
+ggplot(data, aes(x=logFC, y=-log(adj.P.Val))) +
+  geom_point() +
+  scale_colour_manual(name = "logFC +/- 0.3 filtering", values = c("deepskyblue4", "gray81")) +
+  scale_alpha_manual(values=c(0.2, 0.001),guide=F) + 
+  theme(legend.position = "none") +
+  ggrepel::geom_text_repel(aes(label = Label),
+                          size = 3, show.legend = FALSE, colour = "black") +
+   theme(legend.background = element_blank(),panel.grid.major = element_blank(), panel.grid.minor = element_blank(),panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+  xlab("logFC") +
+  ylab("-log(FDR)") +
+  ggtitle("0d - DMPs gaining methylation in sgIL1RN samples")
+dev.off()
+```
+
+
+# Scatterplot for 3d
+```{r}
+setwd("C:/Users/annav/Documents/Gemma_project/Methylation_arrays/Dec_2023/Results/")
+writexl::write_xlsx(DMPs_3D_FDR_annot_betaValues_logFC_filter, "DMPs_3D_FDR_annot_betaValues_logFC_filter.xlsx")
+data <- readxl::read_xlsx("C:/Users/annav/Documents/Gemma_project/Methylation_arrays/Dec_2023/Results/DMPs_3D_sg_vs_NT_FDR_0.05_annotated_EPICv2_new_analysis.xlsx")
+data <- as.data.frame(data)
+
+rownames(data) <- data$cg_name
+
+NT_average <- rowMeans(data[ , c(18:21)], na.rm=TRUE)
+NT_average <- as.data.frame(NT_average)
+
+
+sg_average <- rowMeans(data[ , c(22:25)], na.rm=TRUE)
+sg_average <- as.data.frame(sg_average)
+
+average_3d <- cbind(NT_average, sg_average)
+all_data <- cbind(data, average_3d)
+
+DMPs_3D_pos <- data[data$logFC >= 0,]
+```
+
+
+
+```{r}
+ggplot(DMPs_3D_pos, aes(x=logFC, y=-log(adj.P.Val))) +
+  geom_point(aes(color = as.factor(Color))) +
+  scale_colour_manual(name = "logFC +/- 0.3 filtering", values = c("deepskyblue4", "gray81")) +
+  scale_alpha_manual(values=c(0.2, 0.001),guide=F) + 
+  theme(legend.position = "none") +
+  ggrepel::geom_text_repel(aes(label = Label),
+                          size = 3, show.legend = FALSE, colour = "black") +
+   theme(legend.background = element_blank(),panel.grid.major = element_blank(), panel.grid.minor = element_blank(),panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+  xlab("logFC") +
+  ylab("-log(FDR)") +
+  ggtitle("3D - DMPs gaining methylation in sgIL1RN samples")
+
+
+
+ggplot(DMPs_3D_pos, aes(x=logFC, y=-log(adj.P.Val))) +
+  geom_point(aes(color = as.factor(Color))) +
+  scale_colour_manual(name = "logFC +/- 0.3 filtering", values = c("deepskyblue4", "gray81")) +
+  scale_alpha_manual(values=c(0.2, 0.001),guide=F) + 
+  theme(legend.position = "none") +
+  ggrepel::geom_text_repel(aes(label = Label),
+                          size = 3, show.legend = FALSE, colour = "black") +
+   theme(legend.background = element_blank(),panel.grid.major = element_blank(), panel.grid.minor = element_blank(),panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+  xlab("logFC") +
+  ylab("-log(FDR)") +
+  ggtitle("3D - DMPs gaining methylation in sgIL1RN samples") +
+  scale_x_sqrt(
+    name = "logFC",
+    breaks = c(0,0.30,0.33,0.35,0.38,0.40,0.42,0.45),
+    limits = c(0,0.45),
+    expand = expansion(mult = c(0,0.001))
+  )
+
+
+# 
+ggplot(DMPs_3D_pos, aes(x=logFC, y=-log(adj.P.Val))) +
+ geom_point(aes(color = as.factor(Color))) +
+ scale_colour_manual(name = "logFC +/- 0.3 filtering", values = c("deepskyblue4", "gray81")) +
+ scale_alpha_manual(values=c(0.2, 0.001),guide=F) + 
+ theme(legend.position = "none") +
+ ggrepel::geom_text_repel(aes(label = Label),
+                         size = 3, show.legend = FALSE, colour = "black") +
+    theme(legend.background = element_blank(),panel.grid.major = element_blank(), panel.grid.minor = element_blank(),panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+ xlab("logFC") +
+ ylab("-log(FDR)") +
+ ggtitle("3D - DMPs gaining methylation in sgIL1RN samples") +
+ scale_x_continuous(
+   name = "logFC",
+   breaks = c(0,0.20,0.25,0.3,0.35,0.4,0.45,0.5,0.55,0.6),
+   limits = c(0,0.6),
+   expand = expansion(mult = c(0,0.001))
+     )
+
+ 
+setwd("C:/Users/annav/Documents/Gemma_project/Methylation_arrays")
+pdf("scatterPlot_060.pdf")
+ggplot(DMPs_3D_pos, aes(x=logFC, y=-log(adj.P.Val))) +
+ geom_point(aes(color = as.factor(Color))) +
+ scale_colour_manual(name = "logFC +/- 0.3 filtering", values = c("deepskyblue4", "gray81")) +
+ scale_alpha_manual(values=c(0.2, 0.001),guide=F) + 
+ theme(legend.position = "none") +
+ ggrepel::geom_text_repel(aes(label = Label),
+                         size = 3, show.legend = FALSE, colour = "black") +
+  theme(legend.background = element_blank(),panel.grid.major = element_blank(), panel.grid.minor = element_blank(),panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+ xlab("logFC") +
+ ylab("-log(FDR)") +
+ ggtitle("3D - DMPs gaining methylation in sgIL1RN samples") +
+ scale_x_continuous(
+   name = "logFC",
+   breaks = c(0,0.10,0.15,0.45),
+   limits = c(0,0.45),
+   expand = expansion(mult = c(0,0.001)))
+dev.off()
+
+```
+
+
+```{r}
+setwd("C:/Users/annav/Documents/Gemma_project/plots_febr/")
+pdf("DNA_methylation_3D_sg_vs_nt_scatterPlot_logFC_03_v2.pdf")
+ggplot(DMPs_3D_pos, aes(x=logFC, y=-log(adj.P.Val))) +
+  geom_point(aes(color = as.factor(Color))) +
+  scale_colour_manual(name = "logFC +/- 0.3 filtering", values = c("deepskyblue4", "gray81")) +
+  scale_alpha_manual(values=c(0.2, 0.001),guide=F) + 
+  theme(legend.position = "none") +
+  ggrepel::geom_text_repel(aes(label = Label),
+                          size = 3, show.legend = FALSE, colour = "black") +
+   theme(legend.background = element_blank(),panel.grid.major = element_blank(), panel.grid.minor = element_blank(),panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+  xlab("logFC") +
+  ylab("-log(FDR)") +
+  ggtitle("3D - DMPs gaining methylation in sgIL1RN samples") +
+  xlim(0,0.6) +
+  ylim(5,25)
+dev.off()
+
+
+ 
+ggplot(DMPs_3D_pos, aes(x=logFC, y=-log(adj.P.Val))) +
+ geom_point(aes(color = as.factor(Color))) +
+ scale_colour_manual(name = "logFC +/- 0.3 filtering", values = c("deepskyblue4", "gray81")) +
+ scale_alpha_manual(values=c(0.2, 0.001),guide=F) +
+ theme(legend.position = "none") +
+ ggrepel::geom_text_repel(aes(label = Label),
+                         size = 3, show.legend = FALSE, colour = "black") +
+  theme(legend.background = element_blank(),panel.grid.major = element_blank(), panel.grid.minor = element_blank(),panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+ xlab("logFC") +
+ ylab("-log(FDR)") +
+ ggtitle("3D - DMPs gaining methylation in sgIL1RN samples") +
+ scale_x_cut(breaks=0, which=0, scales=0) +
+ xlim(0,0.5) +
+ ylim(5,25)
+```
+
+
+#### coord_trans
+```{r}
+ggplot(DMPs_3D_pos, aes(x=logFC, y=-log(adj.P.Val))) +
+  geom_point(aes(color = as.factor(Color))) +
+  scale_colour_manual(name = "logFC +/- 0.3 filtering", values = c("deepskyblue4", "gray81")) +
+  scale_alpha_manual(values=c(0.2, 0.001),guide=F) + 
+  theme(legend.position = "none") +
+  ggrepel::geom_text_repel(aes(label = Label),
+                          size = 3, show.legend = FALSE, colour = "black") +
+   theme(legend.background = element_blank(),panel.grid.major = element_blank(), panel.grid.minor = element_blank(),panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+  xlab("logFC") +
+  ylab("-log(FDR)") +
+  ggtitle("3D - DMPs gaining methylation in sgIL1RN samples ; scale log10") +
+  coord_trans(x="log", y="log10")
+
+```
+
+
+```{r}
+pow10 <- scales::exp_trans(10)
+
+ggplot(DMPs_3D_pos, aes(x=logFC, y=-log(adj.P.Val))) +
+  geom_point(aes(color = as.factor(Color))) +
+  scale_colour_manual(name = "logFC +/- 0.3 filtering", values = c("deepskyblue4", "gray81")) +
+  scale_alpha_manual(values=c(0.2, 0.001),guide=F) + 
+  theme(legend.position = "none") +
+  ggrepel::geom_text_repel(aes(label = Label),
+                          size = 3, show.legend = FALSE, colour = "black") +
+   theme(legend.background = element_blank(),panel.grid.major = element_blank(), panel.grid.minor = element_blank(),panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+  xlab("logFC") +
+  ylab("-log(FDR)") +
+  ggtitle("3D - DMPs gaining methylation in sgIL1RN samples") +
+  scale_x_log10(limits = c(0,0.6)) 
+```
+
+
+
+
+
+
+
+# Scatterplot for 7d
+```{r}
+setwd("C:/Users/annav/Documents/Gemma_project/Methylation_arrays/Dec_2023/Results/")
+ writexl::write_xlsx(DMPs_3D_FDR_annot_betaValues_logFC_filter, "DMPs_3D_FDR_annot_betaValues_logFC_filter.xlsx")
+data <- readxl::read_xlsx("C:/Users/annav/Documents/Gemma_project/Methylation_arrays/Dec_2023/Results/DMPs_7D_sg_vs_NT_FDR_0.05_annotated_EPICv2.xlsx")
+data <- as.data.frame(data)
+
+rownames(data) <- data$cg_name
+
+
+DMPs_7D_pos <- data[data$logFC >= 0.2,]
+
+
+
+
+ 
+setwd("C:/Users/annav/Documents/Gemma_project/Methylation_arrays/Dec_2023/Results")
+pdf("DNA_methylation_3D_sg_vs_nt_scatterPlot.pdf")
+ggplot(DMPs_7D_pos, aes(x=logFC, y=-log(adj.P.Val))) +
+  geom_point() +
+  scale_colour_manual(name = "logFC +/- 0.3 filtering", values = c("deepskyblue4", "gray81")) +
+  scale_alpha_manual(values=c(0.2, 0.001),guide=F) + 
+  theme(legend.position = "none") +
+  ggrepel::geom_text_repel(aes(label = Label),
+                          size = 3, show.legend = FALSE, colour = "black") +
+   theme(legend.background = element_blank(),panel.grid.major = element_blank(), panel.grid.minor = element_blank(),panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+  xlab("logFC") +
+  ylab("-log(FDR)") +
+  ggtitle("7D - DMPs gaining methylation in sgIL1RN samples")
+dev.off()
+```
+
+
+
+
+
+# Get beta values for each of the overlapping CGs (overlapping with diff peaks Cas9)
+```{r}
+overlapping_CGs <- read.table("C:/Users/annav/Documents/Gemma_project/ChIPseq/overlapping_diffPeaks_CGs/CgS_on_cas9_peaksDiff_coord.bed", header = T)
+head(overlapping_CGs)
+```
+
+
+
+
