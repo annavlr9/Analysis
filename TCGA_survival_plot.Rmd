@@ -1,0 +1,433 @@
+---
+title: "TCGA - Survival analysis"
+output: html_document
+date: "2023-11-28"
+---
+
+# DDX6
+
+# Read input file
+```{r}
+library(survival)
+ 
+  #Load tables
+norm_table <- read.table("C:/Users/annav/Documents/Bruno_project/TCGA_subtypes_survival/mRNA_expression_RNASeq_V2_RSEM.txt", header = T)
+rownames(norm_table) <- norm_table$SAMPLE_ID
+norm_table <- norm_table[-c(1,2)]
+
+#atf_targets <- read.table("GMX_files/ATF4_regulated_int_genes_DOWN_2h_Hs.gmx", header = T, sep = "\t")
+# atf_targets <- readxl::read_xlsx("C:/Users/annav/Documents/Bruno_project/TCGA_subtypes_survival/dataset_TCGA_AML.xlsx")
+# atf_targets <- mousegnameConverter(atf_targets, "V1")
+ 
+KM_data <- readxl::read_xlsx("C:/Users/annav/Documents/Bruno_project/TCGA_subtypes_survival/dataset_TCGA_AML.xlsx") # Load the survival info table
+```
+
+
+```{r}
+#matrix <- as.matrix(norm_table[atf_targets$V1,])
+matrix <- as.matrix(norm_table)
+matrix <- na.omit(matrix)
+ 
+z_table <- apply(matrix, 2, scale)
+ 
+z_table <- as.data.frame(matrix)
+rownames(z_table) <- rownames(matrix)
+ 
+ 
+mean_table <- apply(z_table, 1, mean)
+ 
+mean_table <- data.frame(Sample = rownames(z_table),
+                         DDX6_genes = mean_table)
+ 
+KM_data <- as.data.frame(KM_data)
+
+mean_table$Sample <- sub("-03$", "", mean_table$Sample)
+
+KM_data_ddx6 <- merge(KM_data, mean_table, by = "Sample")
+KM_data_ddx6$OS_MONTHS <- as.numeric(KM_data_ddx6$OS_MONTHS)
+
+
+#result_df <- subset(mean_table, mean_table$Sample %in% KM_data_ddx6$Sample)
+```
+
+
+
+```{r}
+KM_data_ddx6$median_norm_expr <- median(KM_data_ddx6$DDX6_genes)
+
+medExpr <- -0.35 #median expression of normalized DDX6 counts
+KM_data_ddx6$filtering <- ifelse(KM_data_ddx6$DDX6_genes > medExpr, 'High', ifelse(KM_data_ddx6$DDX6_genes <= medExpr, 'Low', "none"))
+```
+
+
+
+```{r}
+# highExpr <- 1.0
+# lowExpr <- -1.0
+# KM_data_ddx6$expr <- ifelse(KM_data_ddx6$DDX6_genes >= highExpr, 'High',
+#   ifelse(KM_data_ddx6$DDX6_genes <= lowExpr, 'Low', 'Mid'))
+# 
+# # relevel the factors to have mid as the ref level
+# KM_data_ddx6$expr <- factor(KM_data_ddx6$expr,
+#   levels = c('Mid', 'Low', 'High'))
+```
+
+
+```{r}
+# KM_data_ddx6$Group <- ifelse(KM_data_ddx6$Sample %in% slice_max(KM_data_ddx6, result_df, n = 10)$Sample, "TOP",
+#                                  ifelse(KM_data_ddx6$Sample %in% slice_min(KM_data_ddx6, result_df, n = 10)$Sample, "BOTTOM", "REST"))
+```
+
+```{r}
+Y = Surv(KM_data_ddx6$OS_MONTHS, KM_data_ddx6$OS_STATUS == 1)
+kmfit = survfit(Y ~ KM_data_ddx6$expr)
+```
+
+
+```{r} 
+#png("Plots/ATF4_plots/KM_plot_Top50_ATF4_targets_54_overall_survival.png", width = 12, height = 12, units = "cm", pointsize = 12, res = 500)
+plot(kmfit, lty = c("solid", "dashed", "solid"), col = c("black", "grey", "red"), 
+     xlab = "Survival Time In Months", ylab = "Survival Probabilities") + 
+  legend("topright", c("High", "Low", "Mid"), lty = c("solid", "dashed", "solid"), col = c("black", "grey", "red"))
+#dev.off()
+ 
+ 
+KM_data_atf4 <- subset(KM_data_atf4, KM_data_atf4$Group != "REST")
+Y = Surv(KM_data_atf4$OS_MONTHS, KM_data_atf4$OS_STATUS == 1)
+kmfit = survfit(Y ~ KM_data_atf4$Group)
+surv_dif <- survdiff(Y ~ KM_data_atf4$Group, data = KM_data_atf4)
+surv_dif$pvalue
+```
+
+
+# Plots - AML subtypes
+#### All together
+```{r}
+#normal <- KM_data_ddx6[ grepl("Normal", KM_data_ddx6$CYTOGENETIC_CODE_OTHER),]
+table(KM_data_ddx6$filtering == "High" & KM_data_ddx6$STATUS == "1:DECEASED")
+table(KM_data_ddx6$filtering == "Low" & KM_data_ddx6$STATUS == "1:DECEASED")
+
+Y = Surv(KM_data_ddx6$OS_MONTHS, KM_data_ddx6$OS_STATUS == 1)
+kmfit = survfit(Y ~ KM_data_ddx6$filtering)
+
+setwd("C:/Users/annav/Documents/Bruno_project/TCGA_subtypes_survival")
+pdf("survival_plot_all_selected_subtypes.pdf")
+plot(kmfit, lty = c("solid", "dashed"), col = c("dodgerblue4", "black"), 
+     xlab = "Survival Time In Months", ylab = "Survival Probabilities", main = "All subtypes (High = 34 / Low = 34)", lwd = 1.8) 
+  legend("topright", c("High", "Low"), lty = c("solid", "dashed"), col = c("dodgerblue4", "black"))
+dev.off()
+```
+
+#### Normal
+```{r}
+normal <- KM_data_ddx6[ grepl("Normal", KM_data_ddx6$CYTOGENETIC_CODE_OTHER),]
+table(normal$filtering == "Low" & normal$STATUS == "1:DECEASED")
+
+Y = Surv(normal$OS_MONTHS, normal$OS_STATUS == 1)
+kmfit = survfit(Y ~ normal$filtering)
+
+setwd("C:/Users/annav/Documents/Bruno_project/TCGA_subtypes_survival")
+pdf("survival_plot_Normal_karyotype.pdf")
+plot(kmfit, lty = c("solid", "dashed"), col = c("dodgerblue4", "black"), 
+     xlab = "Survival Time In Months", ylab = "Survival Probabilities", main = "Normal karyotype (High = 28 / Low = 26)", lwd = 1.8) 
+  legend("topright", c("High", "Low"), lty = c("solid", "dashed"), col = c("dodgerblue4", "black"))
+dev.off()
+```
+
+#### CBFB-MYH11
+```{r}
+CBFB <- KM_data_ddx6[ grepl("CBFB", KM_data_ddx6$CYTOGENETIC_CODE_OTHER),]
+table(CBFB$filtering == "High")
+
+
+Y = Surv(CBFB$OS_MONTHS, CBFB$OS_STATUS == 1)
+kmfit = survfit(Y ~ CBFB$filtering)
+
+setwd("C:/Users/annav/Documents/Bruno_project/TCGA_subtypes_survival")
+pdf("survival_plot_CBFB_MYH11.pdf")
+plot(kmfit, lty = c("solid", "dashed"), col = c("dodgerblue4", "black"), 
+     xlab = "Survival Time In Months", ylab = "Survival Probabilities", main = "CBFB-MYH11 (High = 1 / Low = 2)", lwd = 1.8) 
+  legend("topright", c("High", "Low"), lty = c("solid", "dashed"), col = c("dodgerblue4", "black"))
+dev.off()
+```
+
+#### MLL
+```{r}
+MLL <- KM_data_ddx6[ grepl("MLL", KM_data_ddx6$CYTOGENETIC_CODE_OTHER),]
+table(MLL$filtering == "High")
+
+
+Y = Surv(MLL$OS_MONTHS, MLL$OS_STATUS == 1)
+kmfit = survfit(Y ~ MLL$filtering)
+
+setwd("C:/Users/annav/Documents/Bruno_project/TCGA_subtypes_survival")
+pdf("survival_plot_MLL.pdf")
+plot(kmfit, lty = c("solid", "dashed"), col = c("dodgerblue4", "black"), 
+     xlab = "Survival Time In Months", ylab = "Survival Probabilities", main = "MLL translocation (High = 1 / Low = 2)", lwd = 1.8) 
+  legend("topright", c("High", "Low"), lty = c("solid", "dashed"), col = c("dodgerblue4", "black"))
+dev.off()
+```
+
+#### PML RARA
+```{r}
+PML <- KM_data_ddx6[ grepl("PML", KM_data_ddx6$CYTOGENETIC_CODE_OTHER),]
+table(PML$filtering == "High")
+
+
+Y = Surv(PML$OS_MONTHS, PML$OS_STATUS == 1)
+kmfit = survfit(Y ~ PML$filtering)
+
+setwd("C:/Users/annav/Documents/Bruno_project/TCGA_subtypes_survival")
+pdf("survival_plot_PML_RARA.pdf")
+plot(kmfit, lty = c("solid", "dashed"), col = c("dodgerblue4", "black"), 
+     xlab = "Survival Time In Months", ylab = "Survival Probabilities", main = "PML-RARA (High = 2 / Low = 3)", lwd = 1.8) 
+  legend("topright", c("High", "Low"), lty = c("solid", "dashed"), col = c("dodgerblue4", "black"))
+dev.off()
+```
+
+#### RUNX1
+```{r}
+RUNX1 <- KM_data_ddx6[ grepl("RUNX1", KM_data_ddx6$CYTOGENETIC_CODE_OTHER),]
+table(RUNX1$filtering == "High")
+
+
+Y = Surv(RUNX1$OS_MONTHS, RUNX1$OS_STATUS == 1)
+kmfit = survfit(Y ~ RUNX1$filtering)
+
+setwd("C:/Users/annav/Documents/Bruno_project/TCGA_subtypes_survival")
+pdf("survival_plot_RUNX1_RUNX1T1.pdf")
+plot(kmfit, lty = c("solid", "dashed"), col = c("dodgerblue4", "black"), 
+     xlab = "Survival Time In Months", ylab = "Survival Probabilities", main = "RUNX1-RUNX1T1 (High = 2 / Low = 1)", lwd = 1.8) 
+  legend("topright", c("High", "Low"), lty = c("solid", "dashed", "solid"), col = c("dodgerblue4", "black"))
+dev.off()
+```
+
+
+
+
+```{r}
+setwd("C:/Users/annav/Documents/Bruno_project/TCGA_subtypes_survival")
+writexl::write_xlsx(KM_data_ddx6, "KM_data_ddx6.xlsx")
+```
+
+
+
+# EIF4ENIF1
+
+# Read input file
+```{r}
+library(survival)
+ 
+  #Load tables
+norm_table_second <- read.table("C:/Users/annav/Documents/Bruno_project/TCGA_subtypes_survival/second_gene_expression_TCGA.txt", header = T)
+rownames(norm_table_second) <- norm_table_second$SAMPLE_ID
+norm_table_second <- norm_table_second[-c(1,2)]
+
+#atf_targets <- read.table("GMX_files/ATF4_regulated_int_genes_DOWN_2h_Hs.gmx", header = T, sep = "\t")
+# atf_targets <- readxl::read_xlsx("C:/Users/annav/Documents/Bruno_project/TCGA_subtypes_survival/dataset_TCGA_AML.xlsx")
+# atf_targets <- mousegnameConverter(atf_targets, "V1")
+ 
+KM_data <- readxl::read_xlsx("C:/Users/annav/Documents/Bruno_project/TCGA_subtypes_survival/dataset_TCGA_AML.xlsx") # Load the survival info table
+```
+
+
+```{r}
+#matrix <- as.matrix(norm_table[atf_targets$V1,])
+matrix_second <- as.matrix(norm_table_second)
+matrix_second <- na.omit(matrix_second)
+ 
+z_table_second <- apply(matrix_second, 2, scale)
+ 
+z_table_second <- as.data.frame(matrix_second)
+rownames(z_table_second) <- rownames(matrix_second)
+ 
+ 
+mean_table_second <- apply(z_table_second, 1, mean)
+ 
+mean_table_second <- data.frame(Sample = rownames(z_table_second),
+                         DDX6_genes = mean_table_second)
+ 
+KM_data <- as.data.frame(KM_data)
+
+mean_table_second$Sample <- sub("-03$", "", mean_table_second$Sample)
+
+KM_data__second <- merge(KM_data, mean_table_second, by = "Sample")
+KM_data__second$OS_MONTHS <- as.numeric(KM_data__second$OS_MONTHS)
+
+
+#result_df <- subset(mean_table, mean_table$Sample %in% KM_data_ddx6$Sample)
+```
+
+
+
+```{r}
+KM_data__second$median_norm_expr <- median(KM_data__second$DDX6_genes)
+
+medExpr <- -0.35 #median expression of normalized DDX6 counts
+KM_data__second$filtering <- ifelse(KM_data__second$DDX6_genes > medExpr, 'High', ifelse(KM_data__second$DDX6_genes <= medExpr, 'Low', "none"))
+```
+
+
+
+```{r}
+# highExpr <- 1.0
+# lowExpr <- -1.0
+# KM_data_ddx6$expr <- ifelse(KM_data_ddx6$DDX6_genes >= highExpr, 'High',
+#   ifelse(KM_data_ddx6$DDX6_genes <= lowExpr, 'Low', 'Mid'))
+# 
+# # relevel the factors to have mid as the ref level
+# KM_data_ddx6$expr <- factor(KM_data_ddx6$expr,
+#   levels = c('Mid', 'Low', 'High'))
+```
+
+
+```{r}
+# KM_data_ddx6$Group <- ifelse(KM_data_ddx6$Sample %in% slice_max(KM_data_ddx6, result_df, n = 10)$Sample, "TOP",
+#                                  ifelse(KM_data_ddx6$Sample %in% slice_min(KM_data_ddx6, result_df, n = 10)$Sample, "BOTTOM", "REST"))
+```
+
+```{r}
+Y = Surv(KM_data_ddx6$OS_MONTHS, KM_data_ddx6$OS_STATUS == 1)
+kmfit = survfit(Y ~ KM_data_ddx6$expr)
+```
+
+
+```{r} 
+#png("Plots/ATF4_plots/KM_plot_Top50_ATF4_targets_54_overall_survival.png", width = 12, height = 12, units = "cm", pointsize = 12, res = 500)
+plot(kmfit, lty = c("solid", "dashed", "solid"), col = c("black", "grey", "red"), 
+     xlab = "Survival Time In Months", ylab = "Survival Probabilities") + 
+  legend("topright", c("High", "Low", "Mid"), lty = c("solid", "dashed", "solid"), col = c("black", "grey", "red"))
+#dev.off()
+ 
+ 
+KM_data_atf4 <- subset(KM_data_atf4, KM_data_atf4$Group != "REST")
+Y = Surv(KM_data_atf4$OS_MONTHS, KM_data_atf4$OS_STATUS == 1)
+kmfit = survfit(Y ~ KM_data_atf4$Group)
+surv_dif <- survdiff(Y ~ KM_data_atf4$Group, data = KM_data_atf4)
+surv_dif$pvalue
+```
+
+
+# Plots - AML subtypes
+#### All together
+```{r}
+#normal <- KM_data_ddx6[ grepl("Normal", KM_data_ddx6$CYTOGENETIC_CODE_OTHER),]
+table(KM_data_ddx6$filtering == "High" & KM_data_ddx6$STATUS == "1:DECEASED")
+table(KM_data_ddx6$filtering == "Low" & KM_data_ddx6$STATUS == "1:DECEASED")
+
+Y = Surv(KM_data_ddx6$OS_MONTHS, KM_data_ddx6$OS_STATUS == 1)
+kmfit = survfit(Y ~ KM_data_ddx6$filtering)
+
+setwd("C:/Users/annav/Documents/Bruno_project/TCGA_subtypes_survival")
+pdf("survival_plot_all_selected_subtypes.pdf")
+plot(kmfit, lty = c("solid", "dashed"), col = c("dodgerblue4", "black"), 
+     xlab = "Survival Time In Months", ylab = "Survival Probabilities", main = "All subtypes (High = 34 / Low = 34)", lwd = 1.8) 
+  legend("topright", c("High", "Low"), lty = c("solid", "dashed"), col = c("dodgerblue4", "black"))
+dev.off()
+```
+
+#### Normal
+```{r}
+normal <- KM_data_ddx6[ grepl("Normal", KM_data_ddx6$CYTOGENETIC_CODE_OTHER),]
+table(normal$filtering == "Low" & normal$STATUS == "1:DECEASED")
+
+Y = Surv(normal$OS_MONTHS, normal$OS_STATUS == 1)
+kmfit = survfit(Y ~ normal$filtering)
+
+setwd("C:/Users/annav/Documents/Bruno_project/TCGA_subtypes_survival")
+pdf("survival_plot_Normal_karyotype.pdf")
+plot(kmfit, lty = c("solid", "dashed"), col = c("dodgerblue4", "black"), 
+     xlab = "Survival Time In Months", ylab = "Survival Probabilities", main = "Normal karyotype (High = 28 / Low = 26)", lwd = 1.8) 
+  legend("topright", c("High", "Low"), lty = c("solid", "dashed"), col = c("dodgerblue4", "black"))
+dev.off()
+```
+
+#### CBFB-MYH11
+```{r}
+CBFB <- KM_data_ddx6[ grepl("CBFB", KM_data_ddx6$CYTOGENETIC_CODE_OTHER),]
+table(CBFB$filtering == "High")
+
+
+Y = Surv(CBFB$OS_MONTHS, CBFB$OS_STATUS == 1)
+kmfit = survfit(Y ~ CBFB$filtering)
+
+setwd("C:/Users/annav/Documents/Bruno_project/TCGA_subtypes_survival")
+pdf("survival_plot_CBFB_MYH11.pdf")
+plot(kmfit, lty = c("solid", "dashed"), col = c("dodgerblue4", "black"), 
+     xlab = "Survival Time In Months", ylab = "Survival Probabilities", main = "CBFB-MYH11 (High = 1 / Low = 2)", lwd = 1.8) 
+  legend("topright", c("High", "Low"), lty = c("solid", "dashed"), col = c("dodgerblue4", "black"))
+dev.off()
+```
+
+#### MLL
+```{r}
+MLL <- KM_data_ddx6[ grepl("MLL", KM_data_ddx6$HISTOLOGICAL_SUBTYPE),]
+table(MLL$filtering == "High")
+
+
+#Y = Surv(MLL$OS_MONTHS, MLL$OS_STATUS == 1)
+Y = Surv(MLL$OS_MONTHS)
+kmfit = survfit(Y ~ MLL$filtering)
+
+#setwd("C:/Users/annav/Documents/Bruno_project/TCGA_subtypes_survival")
+#pdf("survival_plot_MLL.pdf")
+plot(kmfit, lty = c("solid", "dashed"), col = c("dodgerblue4", "black"), 
+     xlab = "Survival Time In Months", ylab = "Survival Probabilities", main = "MLL translocation (High = 1 / Low = 5)", lwd = 1.8) 
+  legend("topright", c("High", "Low"), lty = c("solid", "dashed"), col = c("dodgerblue4", "black"))
+#dev.off()
+
+
+
+
+
+
+
+Y = Surv(MLL$OS_MONTHS, MLL$OS_STATUS == 1)
+kmfit = survfit(Y ~ MLL$filtering)
+
+plot(kmfit, lty = c("solid", "dashed"), col = c("dodgerblue4", "black"), 
+     xlab = "Survival Time In Months", ylab = "Survival Probabilities", main = "MLL translocation (High = 1 / Low = 2)", lwd = 1.8) 
+  legend("topright", c("High", "Low"), lty = c("solid", "dashed"), col = c("dodgerblue4", "black"))
+```
+
+#### PML RARA
+```{r}
+PML <- KM_data_ddx6[ grepl("PML", KM_data_ddx6$CYTOGENETIC_CODE_OTHER),]
+table(PML$filtering == "High")
+
+
+Y = Surv(PML$OS_MONTHS, PML$OS_STATUS == 1)
+kmfit = survfit(Y ~ PML$filtering)
+
+setwd("C:/Users/annav/Documents/Bruno_project/TCGA_subtypes_survival")
+pdf("survival_plot_PML_RARA.pdf")
+plot(kmfit, lty = c("solid", "dashed"), col = c("dodgerblue4", "black"), 
+     xlab = "Survival Time In Months", ylab = "Survival Probabilities", main = "PML-RARA (High = 2 / Low = 3)", lwd = 1.8) 
+  legend("topright", c("High", "Low"), lty = c("solid", "dashed"), col = c("dodgerblue4", "black"))
+dev.off()
+```
+
+#### RUNX1
+```{r}
+RUNX1 <- KM_data_ddx6[ grepl("RUNX1", KM_data_ddx6$CYTOGENETIC_CODE_OTHER),]
+table(RUNX1$filtering == "High")
+
+
+Y = Surv(RUNX1$OS_MONTHS, RUNX1$OS_STATUS == 1)
+kmfit = survfit(Y ~ RUNX1$filtering)
+
+setwd("C:/Users/annav/Documents/Bruno_project/TCGA_subtypes_survival")
+pdf("survival_plot_RUNX1_RUNX1T1.pdf")
+plot(kmfit, lty = c("solid", "dashed"), col = c("dodgerblue4", "black"), 
+     xlab = "Survival Time In Months", ylab = "Survival Probabilities", main = "RUNX1-RUNX1T1 (High = 2 / Low = 1)", lwd = 1.8) 
+  legend("topright", c("High", "Low"), lty = c("solid", "dashed", "solid"), col = c("dodgerblue4", "black"))
+dev.off()
+```
+
+
+
+
+```{r}
+setwd("C:/Users/annav/Documents/Bruno_project/TCGA_subtypes_survival")
+writexl::write_xlsx(KM_data_ddx6, "KM_data_ddx6.xlsx")
+```
